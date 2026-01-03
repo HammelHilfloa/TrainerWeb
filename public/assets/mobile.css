@@ -1,0 +1,247 @@
+:root {
+    --bg: #0f172a;
+    --card: #111827;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+    --warning: #f59e0b;
+    --border: #1f2937;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+}
+.app-bar {
+    position: sticky;
+    top: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 16px;
+    background: rgba(17, 24, 39, 0.85);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+}
+.container {
+    padding: 12px;
+}
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 16px;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+}
+.card + .card { margin-top: 14px; }
+.card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+.card h2 { margin: 0; font-size: 22px; }
+.eyebrow { margin: 0; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-size: 11px; }
+.tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.tag {
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: #1f2937;
+    color: var(--text);
+    font-size: 12px;
+}
+.tag-success { background: rgba(34, 197, 94, 0.15); color: #4ade80; border: 1px solid rgba(74, 222, 128, 0.3); }
+.tag-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(251, 191, 36, 0.3); }
+
+.card-body { margin-top: 12px; color: var(--muted); line-height: 1.5; }
+
+.bottom-nav {
+    position: sticky;
+    bottom: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    background: rgba(17, 24, 39, 0.95);
+    backdrop-filter: blur(10px);
+    border-top: 1px solid var(--border);
+}
+.nav-item {
+    padding: 12px 8px;
+    text-align: center;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 13px;
+}
+.nav-item:hover { background: rgba(255,255,255,0.03); }
+
+.login-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 18px;
+    margin: 16px 0;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.4);
+}
+.login-card input {
+    width: 100%;
+    padding: 12px 14px;
+    margin: 8px 0;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: #0b1120;
+    color: var(--text);
+}
+.login-card button {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    border: none;
+    color: #0b1120;
+    font-weight: 700;
+    border-radius: 12px;
+    margin-top: 10px;
+}
+.hero { 
+    padding: 24px 16px 0 16px;
+    text-align: left;
+}
+.hero h1 { margin: 0 0 6px 0; font-size: 26px; }
+.hero p { margin: 0; color: var(--muted); }
+
+@media (min-width: 768px) {
+    .container { max-width: 640px; margin: 0 auto; }
+}
+
+.plan-card {
+    background: linear-gradient(180deg, #111827 0%, #0b1120 100%);
+    position: relative;
+    overflow: hidden;
+}
+
+.plan-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 20% 20%, rgba(34,197,94,0.08), transparent 30%),
+                radial-gradient(circle at 80% 0%, rgba(59,130,246,0.08), transparent 25%);
+    pointer-events: none;
+}
+
+.plan-card .card-head,
+.plan-card .card-body { position: relative; z-index: 1; }
+
+.training-details { display: flex; flex-direction: column; gap: 14px; }
+
+.details-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+}
+
+.detail-chip {
+    background: rgba(255,255,255,0.02);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 10px 12px;
+    backdrop-filter: blur(6px);
+}
+
+.detail-value { color: var(--text); font-weight: 600; }
+
+.plan-board {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.plan-column {
+    background: rgba(15,23,42,0.7);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.plan-column-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+}
+
+.plan-column h4 { margin: 2px 0 0 0; }
+
+.pill {
+    padding: 6px 10px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text);
+    font-size: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+
+.droppable {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 120px;
+}
+
+.plan-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 10px;
+    align-items: start;
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.03);
+    cursor: grab;
+    transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.plan-item:active { cursor: grabbing; }
+
+.plan-item.dragging {
+    opacity: 0.85;
+    transform: scale(1.02);
+    border-color: rgba(34,197,94,0.4);
+    background: rgba(34,197,94,0.08);
+}
+
+.plan-item-handle {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.06);
+    font-size: 16px;
+    color: var(--text);
+}
+
+.plan-item-title {
+    margin: 0;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.plan-item-text { margin: 2px 0 0 0; color: var(--muted); font-size: 14px; }
+
+.plan-note {
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.02);
+}
+
+.droppable.active { border: 1px dashed rgba(34,197,94,0.6); border-radius: 12px; padding: 12px; }
+
+.droppable.empty::before {
+    content: "Ablegen, um Block hier zu planen";
+    color: var(--muted);
+    font-size: 13px;
+}
