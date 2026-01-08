@@ -1,0 +1,220 @@
+<section id="view-einsaetze">
+  <div class="info-box">
+    <p class="muted small">Check-in ist auch nachträglich möglich. Deine Einheit zählt erst nach dem Check-in.</p>
+  </div>
+
+  <div class="filters" aria-label="Einsätze filtern">
+    <label class="chip-toggle">
+      <input type="checkbox" id="filterCheckinOpen" />
+      <span>Nur Check-in offen</span>
+    </label>
+    <label class="chip-toggle">
+      <input type="checkbox" id="filterPast" />
+      <span>Nur vergangene</span>
+    </label>
+  </div>
+
+  <div id="einsaetzeList" class="training-list" aria-live="polite"></div>
+</section>
+
+<script>
+  const EinsaetzeView = (() => {
+    const els = {
+      list: null,
+      filterCheckinOpen: null,
+      filterPast: null,
+    };
+
+    const state = {
+      items: [],
+    };
+
+    const filters = {
+      checkinOpenOnly: false,
+      pastOnly: false,
+    };
+
+    function initElements() {
+      els.list = document.querySelector('#einsaetzeList');
+      els.filterCheckinOpen = document.querySelector('#filterCheckinOpen');
+      els.filterPast = document.querySelector('#filterPast');
+    }
+
+    function startOfTodayTs() {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+
+    function isCheckinOpen(entry) {
+      const attendance = String(entry.attendance || '').trim().toUpperCase();
+      const hasCheckin = !!entry.checkin_am;
+      return (!attendance || attendance === 'OFFEN') && !hasCheckin;
+    }
+
+    function applyFilters() {
+      const todayTs = startOfTodayTs();
+      return state.items
+        .filter((e) => {
+          if (filters.checkinOpenOnly && !isCheckinOpen(e)) return false;
+          if (filters.pastOnly && e.trainingDatumTs >= todayTs) return false;
+          return true;
+        })
+        .sort((a, b) => a.trainingDatumTs - b.trainingDatumTs);
+    }
+
+    function renderEmpty(message) {
+      if (!els.list) return;
+      els.list.innerHTML = `<p class="empty-hint">${message}</p>`;
+    }
+
+    function renderCard(entry) {
+      const status = entry.trainingStatus || entry.training_status || 'Status';
+      const openCheckin = isCheckinOpen(entry);
+      const card = document.createElement('article');
+      card.className = 'training-card card';
+      if (openCheckin) card.classList.add('needs-attention');
+
+      const checkinLabel = openCheckin
+        ? UIComponents.badge('Check-in offen', 'warning')
+        : UIComponents.badge(entry.checkin_am ? `Eingecheckt ${entry.checkin_am}` : 'Check-in abgeschlossen', 'success');
+
+      card.innerHTML = `
+        <div class="training-top">
+          <div>
+            <p class="muted">${entry.training_datum || entry.datum} · ${entry.start}–${entry.ende}</p>
+            <h3 class="training-title">${entry.gruppe || ''}</h3>
+            <p class="muted">${entry.ort || ''}</p>
+          </div>
+          <div class="badge-stack">
+            ${UIComponents.badge(status, 'info')}
+            ${checkinLabel}
+          </div>
+        </div>
+        <div class="training-meta">
+          <span>${entry.rolle ? `Rolle: ${entry.rolle}` : ''}</span>
+          <span class="muted">Status: ${status}</span>
+        </div>
+      `;
+
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+
+      if (openCheckin) {
+        const btnCheckin = document.createElement('button');
+        btnCheckin.type = 'button';
+        btnCheckin.className = 'btn primary';
+        btnCheckin.textContent = 'Check-in';
+        btnCheckin.addEventListener('click', () => handleCheckin(entry, btnCheckin));
+        actions.appendChild(btnCheckin);
+      }
+
+      const btnWithdraw = document.createElement('button');
+      btnWithdraw.type = 'button';
+      btnWithdraw.className = 'btn ghost';
+      btnWithdraw.textContent = 'Austragen';
+      btnWithdraw.addEventListener('click', () => handleWithdraw(entry, btnWithdraw));
+      actions.appendChild(btnWithdraw);
+
+      card.appendChild(actions);
+      return card;
+    }
+
+    function renderList() {
+      if (!els.list) return;
+      const items = applyFilters();
+      if (!items.length) {
+        renderEmpty('Keine Einsätze gefunden.');
+        return;
+      }
+
+      const frag = document.createDocumentFragment();
+      items.forEach((entry) => {
+        const card = renderCard(entry);
+        if (card) frag.appendChild(card);
+      });
+
+      els.list.innerHTML = '';
+      els.list.appendChild(frag);
+    }
+
+    function setButtonLoading(btn, loading) {
+      if (!btn) return;
+      btn.disabled = !!loading;
+      btn.classList.toggle('loading', !!loading);
+      if (loading) {
+        btn.dataset.prevText = btn.textContent;
+        btn.textContent = 'Bitte warten...';
+      } else if (btn.dataset.prevText) {
+        btn.textContent = btn.dataset.prevText;
+        delete btn.dataset.prevText;
+      }
+    }
+
+    async function handleCheckin(entry, btn) {
+      const t = requireToken_();
+      if (!t) {
+        hardLogout_("Session abgelaufen.");
+        return;
+      }
+      setButtonLoading(btn, true);
+      const res = await apiCall('apiCheckin', t, entry.einteilung_id, true);
+      setButtonLoading(btn, false);
+      if (!res || !res.ok) {
+        showToast(res && res.error ? res.error : 'Check-in fehlgeschlagen', 'error');
+        return;
+      }
+      showToast('Check-in gespeichert');
+      await refreshBootstrap(true);
+      renderList();
+    }
+
+    async function handleWithdraw(entry, btn) {
+      const t = requireToken_();
+      if (!t) {
+        hardLogout_("Session abgelaufen.");
+        return;
+      }
+      setButtonLoading(btn, true);
+      const res = await apiCall('apiWithdraw', t, entry.einteilung_id);
+      setButtonLoading(btn, false);
+      if (!res || !res.ok) {
+        showToast(res && res.error ? res.error : 'Austragen fehlgeschlagen', 'error');
+        return;
+      }
+      showToast('Du wurdest ausgetragen');
+      await refreshBootstrap(true);
+      renderList();
+    }
+
+    function setData(bootstrap) {
+      state.items = Array.isArray(bootstrap?.mineActive) ? bootstrap.mineActive : [];
+      renderList();
+    }
+
+    function registerFilters() {
+      if (els.filterCheckinOpen) {
+        els.filterCheckinOpen.addEventListener('change', (ev) => {
+          filters.checkinOpenOnly = !!ev.target.checked;
+          renderList();
+        });
+      }
+      if (els.filterPast) {
+        els.filterPast.addEventListener('change', (ev) => {
+          filters.pastOnly = !!ev.target.checked;
+          renderList();
+        });
+      }
+    }
+
+    function init() {
+      initElements();
+      registerFilters();
+    }
+
+    return {
+      init,
+      setData,
+    };
+  })();
+</script>

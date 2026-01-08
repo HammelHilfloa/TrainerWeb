@@ -1,0 +1,750 @@
+<header class="app-header" id="appHeader" style="display:none;">
+  <div class="header-row">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">TT</div>
+      <div class="brand-text">
+        <p class="title">TrainerTool</p>
+        <p class="subtitle">Das Trainertool des KSV Homberg</p>
+      </div>
+    </div>
+    <button class="user-pill" id="btnProfile" type="button" aria-label="Profilmenü öffnen"></button>
+  </div>
+</header>
+
+<main>
+  <section id="appView" style="display:none;">
+    <div class="card">
+      <div class="row-space">
+        <h2 id="viewTitle">Trainings</h2>
+        <button class="btn ghost" type="button" id="logoutBtn">Logout</button>
+      </div>
+      <div class="views" id="viewContainer">
+        <?!= include('ui_trainings'); ?>
+        <?!= include('ui_einsaetze'); ?>
+        <?!= include('ui_abrechnung'); ?>
+        <?!= include('ui_admin'); ?>
+        <?!= include('ui_turniere'); ?>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="sheet-backdrop" id="profileSheetBackdrop" hidden>
+  <div class="sheet" id="profileSheet" role="dialog" aria-modal="true" aria-labelledby="profileSheetTitle">
+    <div class="sheet-header">
+      <h3 class="sheet-title" id="profileSheetTitle">Profil</h3>
+      <button class="icon-btn" type="button" id="closeProfileSheet" aria-label="Profilmenü schließen">×</button>
+    </div>
+    <div class="sheet-body">
+      <?!= include('ui_mehr'); ?>
+    </div>
+  </div>
+</div>
+
+<nav class="bottom-nav" id="bottomNav" style="display:none;" aria-label="Navigation">
+  <button class="nav-btn active" data-view="trainings">Trainings</button>
+  <button class="nav-btn" data-view="einsaetze">Einsätze</button>
+  <button class="nav-btn" data-view="abrechnung">Abrechnung</button>
+  <button class="nav-btn" data-view="turniere">Turniere</button>
+  <button class="nav-btn" data-view="admin" id="navAdmin" hidden>Admin</button>
+</nav>
+
+<script>
+  document.body.classList.add("logged-out");
+
+  const LS_TOKEN = "vh_token";
+  window.AppState = window.AppState || {};
+  AppState.token = AppState.token ?? null;
+  AppState.user = AppState.user ?? null;
+  window.__vhDebug = window.__vhDebug || { enabled: true, logs: [] };
+  let trainerNamesLoaded = false;
+  let trainerNamesLoading = false;
+  const state = {
+    bootstrap: null,
+    viewsInitialized: false,
+  };
+
+  const qs = (selector) => document.querySelector(selector);
+  const qsa = (selector) => Array.from(document.querySelectorAll(selector));
+
+  function dbg_(msg, obj) {
+    try {
+      const line = `${new Date().toISOString()} | ${msg}${obj ? ` | ${JSON.stringify(obj)}` : ""}`;
+      window.__vhDebug.logs.push(line);
+      console.log("[VH]", msg, obj || "");
+      const el = document.getElementById("debugBox");
+      if (el) {
+        el.textContent = window.__vhDebug.logs.slice(-30).join("\n");
+      }
+    } catch (e) {}
+  }
+
+  function toggleDebugBox_() {
+    const el = document.getElementById("debugBox");
+    if (!el) return;
+    el.style.display = window.__vhDebug.enabled ? "block" : "none";
+  }
+
+  function showSpinner(show) {
+    const el = qs("#spinner");
+    if (!el) return;
+    el.classList.toggle("show", !!show);
+  }
+
+  function showLoginStatus(message, debugData) {
+    if (!message) return;
+    dbg_("login status", { message, debugData });
+    const box = qs("#loginError");
+    if (box) {
+      box.textContent = message;
+      box.hidden = false;
+    }
+    showToast(message);
+    if (debugData !== undefined) {
+      const debugBox = qs("#loginDebug");
+      if (debugBox) {
+        debugBox.textContent = JSON.stringify(debugData, null, 2);
+        debugBox.hidden = false;
+      }
+    }
+  }
+
+  function showLoginError(message, debugData) {
+    dbg_("login error", { message, debugData });
+    const box = qs("#loginError");
+    if (box) {
+      box.textContent = message || "Login fehlgeschlagen.";
+      box.hidden = false;
+    }
+
+    const debugBox = qs("#loginDebug");
+    if (debugBox) {
+      if (debugData !== undefined && debugData !== null) {
+        debugBox.textContent = JSON.stringify(debugData, null, 2);
+        debugBox.hidden = false;
+      } else {
+        debugBox.textContent = "";
+        debugBox.hidden = true;
+      }
+    }
+
+    if (message) {
+      console.error("Login error:", message);
+    }
+  }
+
+  function clearLoginError() {
+    const box = qs("#loginError");
+    if (box) {
+      box.textContent = "";
+      box.hidden = true;
+    }
+
+    const debugBox = qs("#loginDebug");
+    if (debugBox) {
+      debugBox.textContent = "";
+      debugBox.hidden = true;
+    }
+  }
+
+  function showToast(message, type = "info") {
+    const el = qs("#toast");
+    if (!el || !message) return;
+    dbg_("toast", { message, type });
+    el.textContent = message;
+    el.style.background = type === "error" ? "#b91c1c" : "rgba(15,23,42,0.92)";
+    el.classList.add("show");
+    setTimeout(() => el.classList.remove("show"), 2500);
+  }
+
+  function setLoginButtonDisabled(disabled) {
+    const btn = qs("#loginBtn");
+    if (btn) {
+      btn.disabled = !!disabled;
+    }
+  }
+
+  function setView(view) {
+    if (!isLoggedIn()) return;
+    if (view === "admin" && !(AppState.user && AppState.user.is_admin)) {
+      view = "trainings";
+    }
+    qsa(".nav-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.view === view));
+    qsa(".views > section").forEach((section) => section.classList.toggle("active", section.id === `view-${view}`));
+    const titleMap = {
+      trainings: "Trainings",
+      einsaetze: "Einsätze",
+      abrechnung: "Abrechnung",
+      turniere: "Turniere",
+      admin: "Admin",
+    };
+    const title = qs("#viewTitle");
+    if (title) title.textContent = titleMap[view] || "";
+  }
+
+  function toggleShell(visible) {
+    const appShell = qs("#screen-app");
+    const appView = qs("#appView");
+    const header = qs("#appHeader");
+    const nav = qs("#bottomNav");
+    if (appShell) appShell.hidden = !visible;
+    if (appView) appView.style.display = visible ? "block" : "none";
+    if (header) header.style.display = visible ? "block" : "none";
+    if (nav) nav.style.display = visible ? "grid" : "none";
+  }
+
+  function setUser(user) {
+    AppState.user = user || null;
+    const el = qs("#btnProfile");
+    if (el) el.textContent = AppState.user ? AppState.user.name || AppState.user.username || "" : "";
+    toggleAdminAccess(AppState.user && AppState.user.is_admin);
+  }
+
+  function toggleAdminAccess(isAdmin) {
+    const navBtn = qs("#navAdmin");
+    const nav = qs("#bottomNav");
+    const adminSection = qs("#view-admin");
+    const allow = !!isAdmin;
+    if (navBtn) {
+      navBtn.hidden = !allow;
+      if (!allow) navBtn.classList.remove("active");
+    }
+    if (nav) nav.classList.toggle("has-admin", allow);
+    if (adminSection) adminSection.style.display = allow ? "block" : "none";
+  }
+
+  function setBootstrap(data) {
+    state.bootstrap = data || null;
+    const bootstrapData = state.bootstrap || {};
+    if (bootstrapData.user) {
+      setUser(bootstrapData.user);
+    }
+
+    try {
+      if (typeof TrainingsView !== "undefined" && TrainingsView && typeof TrainingsView.setData === "function") {
+        TrainingsView.setData(bootstrapData);
+      }
+    } catch (err) {
+      console.error("TrainingsView.setData failed", err);
+    }
+
+    try {
+      if (typeof EinsaetzeView !== "undefined" && EinsaetzeView && typeof EinsaetzeView.setData === "function") {
+        EinsaetzeView.setData(bootstrapData);
+      }
+    } catch (err) {
+      console.error("EinsaetzeView.setData failed", err);
+    }
+
+    try {
+      if (typeof AbrechnungView !== "undefined" && AbrechnungView && typeof AbrechnungView.setData === "function") {
+        AbrechnungView.setData(bootstrapData);
+      }
+    } catch (err) {
+      console.error("AbrechnungView.setData failed", err);
+    }
+
+    try {
+      if (typeof TurniereView !== "undefined" && TurniereView && typeof TurniereView.setData === "function") {
+        TurniereView.setData(bootstrapData);
+      }
+    } catch (err) {
+      console.error("TurniereView.setData failed", err);
+    }
+
+    try {
+      if (typeof AdminView !== "undefined" && AdminView && typeof AdminView.setData === "function") {
+        AdminView.setData(bootstrapData);
+      }
+    } catch (err) {
+      console.error("AdminView.setData failed", err);
+    }
+
+    try {
+      if (typeof MehrView !== "undefined" && MehrView && typeof MehrView.setData === "function") {
+        MehrView.setData(bootstrapData);
+      }
+    } catch (err) {
+      console.error("MehrView.setData failed", err);
+    }
+  }
+
+  function apiCall(name, ...args) {
+    return new Promise((resolve) => {
+      dbg_("apiCall start", { name, argsPreview: args.map((arg) => typeof arg) });
+      google.script.run
+        .withSuccessHandler((res) => {
+          dbg_("apiCall success", { name, res });
+          resolve(res);
+        })
+        .withFailureHandler((err) => {
+          const message = err && err.message ? err.message : String(err || "Unbekannter Fehler");
+          dbg_("apiCall failure", { name, message });
+          resolve({ ok: false, error: message });
+        })[name](...args);
+    });
+  }
+
+  function gasCall_(fnName, args, { onOk, onErr } = {}) {
+    dbg_("gasCall start", { fnName, argsPreview: (args || []).map((arg) => typeof arg) });
+    const runner = google.script.run
+      .withSuccessHandler((res) => {
+        dbg_("gasCall success", { fnName, res });
+        if (onOk) onOk(res);
+      })
+      .withFailureHandler((err) => {
+        const msg = err && err.message ? err.message : String(err);
+        dbg_("gasCall failure", { fnName, msg });
+        if (onErr) onErr(msg, err);
+      });
+    runner[fnName].apply(runner, args || []);
+  }
+
+  function apiAuthed(name, ...args) {
+    const t = requireToken_();
+    if (!t) {
+      return Promise.resolve({ ok: false, error: "Session abgelaufen." });
+    }
+    return apiCall(name, t, ...args);
+  }
+
+  function getToken() {
+    return AppState.token;
+  }
+
+  function requireToken_() {
+    const t = AppState.token;
+    if (!t) return null;
+    const trimmed = String(t).trim();
+    return trimmed ? trimmed : null;
+  }
+
+  function hardLogout_(message) {
+    const finalMessage = message || "Session abgelaufen.";
+    dbg_("hardLogout", { message: finalMessage });
+    AppState.token = null;
+    AppState.user = null;
+    localStorage.removeItem(LS_TOKEN);
+    applyLoggedOutUi();
+    setUser(null);
+    setBootstrap(null);
+    renderLogin();
+    showLoginError(finalMessage);
+    showToast(finalMessage, "error");
+  }
+
+  function setAuth(state) {
+    const html = document.documentElement;
+    const next = state === "in" ? "in" : "out";
+    if (html) html.dataset.auth = next;
+
+    const isLoggedInState = next === "in";
+    document.body.classList.toggle("logged-in", isLoggedInState);
+    document.body.classList.toggle("logged-out", !isLoggedInState);
+  }
+
+  function isLoggedIn() {
+    return document.body.classList.contains("logged-in");
+  }
+
+  function applyLoggedOutUi() {
+    setAuth("out");
+    toggleShell(false);
+  }
+
+  async function loadTrainerNames() {
+    const input = qs("#trainerName");
+    if (!input) return;
+    if (trainerNamesLoaded && qs("#trainerNames")) return;
+    if (trainerNamesLoading) return;
+    trainerNamesLoading = true;
+
+    try {
+      const res = await apiCall("apiListActiveTrainers");
+      const names = Array.isArray(res?.items)
+        ? res.items.map((item) => item?.name).filter(Boolean)
+        : [];
+      if (!names || names.length === 0) {
+        return;
+      }
+
+      let dataList = qs("#trainerNames");
+      if (!dataList) {
+        dataList = document.createElement("datalist");
+        dataList.id = "trainerNames";
+        input.setAttribute("list", dataList.id);
+        input.insertAdjacentElement("afterend", dataList);
+      }
+
+      dataList.innerHTML = "";
+      [...new Set(names)].sort((a, b) => a.localeCompare(b, "de")).forEach((name) => {
+        const option = document.createElement("option");
+        option.value = name;
+        dataList.appendChild(option);
+      });
+      trainerNamesLoaded = true;
+    } catch (err) {
+      const message = err && err.message ? err.message : "Trainerliste konnte nicht geladen werden.";
+      showLoginError(message);
+      console.error("loadTrainerNames failed", err);
+    } finally {
+      trainerNamesLoading = false;
+    }
+  }
+
+  function renderLogin() {
+    applyLoggedOutUi();
+    clearCandidateSelection();
+    clearLoginError();
+    toggleDebugBox_();
+    loadTrainerNames();
+  }
+
+  function clearCandidateSelection() {
+    const container = qs("#loginCandidates");
+    const list = qs("#candidateList");
+    if (list) list.innerHTML = "";
+    if (container) container.hidden = true;
+  }
+
+  function renderCandidateSelection(candidates = []) {
+    const container = qs("#loginCandidates");
+    const list = qs("#candidateList");
+    if (!container || !list) return;
+
+    list.innerHTML = "";
+    candidates.forEach((candidate) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn ghost";
+      btn.textContent = candidate.name || candidate.trainer_id || "Unbekannt";
+      btn.addEventListener("click", () => handleCandidateLogin(candidate.trainer_id));
+      list.appendChild(btn);
+    });
+
+    container.hidden = candidates.length === 0;
+  }
+
+  function renderApp() {
+    if (document.documentElement.dataset.auth !== "in") return;
+
+    try {
+      if (!state.viewsInitialized) {
+        initNavigation();
+        initLogout();
+        initProfileSheet();
+        if (typeof TrainingsView !== "undefined" && TrainingsView && typeof TrainingsView.init === "function") {
+          TrainingsView.init();
+        }
+        if (typeof EinsaetzeView !== "undefined" && EinsaetzeView && typeof EinsaetzeView.init === "function") {
+          EinsaetzeView.init();
+        }
+        if (typeof AbrechnungView !== "undefined" && AbrechnungView && typeof AbrechnungView.init === "function") {
+          AbrechnungView.init();
+        }
+        if (typeof TurniereView !== "undefined" && TurniereView && typeof TurniereView.init === "function") {
+          TurniereView.init();
+        }
+        if (typeof AdminView !== "undefined" && AdminView && typeof AdminView.init === "function") {
+          AdminView.init();
+        }
+        if (typeof MehrView !== "undefined" && MehrView && typeof MehrView.init === "function") {
+          MehrView.init();
+        }
+        state.viewsInitialized = true;
+      }
+    } catch (err) {
+      console.error("Render app failed", err);
+      showToast("Ansicht konnte nicht geladen werden.", "error");
+    }
+
+    toggleShell(true);
+    setView("trainings");
+  }
+
+  function handleLogin(event) {
+    event.preventDefault();
+    clearLoginError();
+    doLogin();
+  }
+
+  function onLoginClick_() {
+    const trainerName = qs("#trainerName")?.value.trim() || "";
+    const pin = qs("#pin")?.value.trim() || "";
+    dbg_("onLoginClick_ start", { name: trainerName, pinLen: pin ? pin.length : 0 });
+    showLoginStatus("Login wird geprüft…");
+    doLogin();
+  }
+
+  function doLogin() {
+    clearCandidateSelection();
+    clearLoginError();
+
+    const trainerName = qs("#trainerName")?.value.trim() || "";
+    const pin = qs("#pin")?.value.trim() || "";
+    dbg_("doLogin start", { name: trainerName, pinLen: pin ? pin.length : 0 });
+
+    if (!trainerName || !pin || !/^\d{4,8}$/.test(pin)) {
+      showLoginError("Bitte Namen eingeben und PIN (4-8 Ziffern).");
+      return;
+    }
+
+    setLoginButtonDisabled(true);
+    console.info("Login request (by name)", trainerName);
+    showSpinner(true);
+    showLoginStatus("Login wird geprüft …");
+    gasCall_("apiLoginByName", [trainerName, pin], {
+      onOk: (res) => handleLoginResponse(res),
+      onErr: (msg, err) => {
+        showSpinner(false);
+        setLoginButtonDisabled(false);
+        showLoginError(`Serverfehler: ${msg}`, err);
+      },
+    });
+  }
+
+  function handleLoginResponse(res) {
+    console.info("Login response", res);
+    dbg_("login response", res);
+    showSpinner(false);
+    setLoginButtonDisabled(false);
+
+    if (res && Array.isArray(res.candidates) && res.candidates.length) {
+      renderCandidateSelection(res.candidates);
+      showLoginError(res.error || "Bitte Person auswählen.");
+      return;
+    }
+
+    if (!res || !res.ok || !res.token) {
+      showLoginError(res && res.error ? res.error : "Login fehlgeschlagen.");
+      return;
+    }
+
+    clearCandidateSelection();
+    clearLoginError();
+    showToast("Eingeloggt");
+    finalizeLogin(res.token, res.user);
+  }
+
+  function handleCandidateLogin(trainerId) {
+    clearLoginError();
+    const pinInput = qs("#pin");
+    const pin = (pinInput?.value || "").trim();
+    if (!trainerId || !pin) {
+      showLoginError("Bitte PIN eingeben.");
+      return;
+    }
+
+    console.info("Login request (by candidate)", trainerId);
+    showSpinner(true);
+    gasCall_("apiLogin", [trainerId, pin], {
+      onOk: (res) => handleLoginResponse(res),
+      onErr: (msg, err) => {
+        showSpinner(false);
+        showLoginError(`Serverfehler: ${msg}`, err);
+      },
+    });
+  }
+
+  function finalizeLogin(newToken, user) {
+    AppState.token = String(newToken || "").trim() || null;
+    if (!AppState.token) {
+      showLoginError("Login fehlgeschlagen (kein Token).");
+      return;
+    }
+    localStorage.setItem(LS_TOKEN, AppState.token);
+    dbg_("token stored", { tokenLen: AppState.token.length });
+    AppState.user = user || null;
+    runBootstrap_();
+  }
+
+  function runBootstrap_() {
+    const t = requireToken_();
+    if (!t) {
+      dbg_("bootstrap aborted - missing token");
+      showLogin_("Keine Session. Bitte einloggen.");
+      return false;
+    }
+    showSpinner(true);
+    console.info("Bootstrap request");
+    showLoginStatus("Bootstrap wird geladen …");
+    gasCall_("apiBootstrap", [t], {
+      onOk: (res) => handleBootstrapResponse(res),
+      onErr: (msg) => {
+        showSpinner(false);
+        handleBootstrapResponse({ ok: false, error: msg || "Bootstrap fehlgeschlagen." });
+      },
+    });
+    return true;
+  }
+
+  function handleBootstrapResponse(res) {
+    console.info("Bootstrap response", res);
+    dbg_("bootstrap response", res);
+    showSpinner(false);
+    if (res && res.ok) {
+      console.info("Bootstrap ok");
+      setAuth("in");
+      toggleShell(true);
+      setUser(res.user || AppState.user || {});
+      try {
+        setBootstrap(res);
+      } catch (err) {
+        console.error("setBootstrap failed", err);
+        showToast("Daten konnten nicht geladen werden.", "error");
+      }
+      try {
+        renderApp();
+      } catch (err) {
+        console.error("renderApp failed", err);
+        showToast("App konnte nicht angezeigt werden.", "error");
+      }
+      showToast("Bootstrap abgeschlossen");
+      return true;
+    }
+
+    const message = res && res.error ? res.error : "Session abgelaufen.";
+    if (/Session abgelaufen/i.test(message)) {
+      hardLogout_(message);
+      return false;
+    }
+    showLoginError(message);
+    showToast(message, "error");
+    return false;
+  }
+
+  async function refreshBootstrap(showSpinnerOverlay = false) {
+    const t = requireToken_();
+    if (!t) {
+      showLogin_("Keine Session. Bitte einloggen.");
+      return null;
+    }
+    if (showSpinnerOverlay) showSpinner(true);
+    const res = await apiCall("apiBootstrap", t);
+    if (showSpinnerOverlay) showSpinner(false);
+    if (res && res.ok) {
+      setBootstrap(res);
+      return res;
+    }
+
+    const message = res && res.error ? res.error : "Session abgelaufen.";
+    if (/Session abgelaufen/i.test(message)) {
+      hardLogout_(message);
+    } else {
+      showLoginError(message);
+      showToast(message, "error");
+    }
+    return res;
+  }
+
+  async function logout(silent = false) {
+    const currentToken = requireToken_();
+    hardLogout_();
+    if (currentToken) {
+      apiCall("apiLogout", currentToken);
+    }
+    if (!silent) showToast("Abgemeldet");
+  }
+
+  function initNavigation() {
+    qsa(".nav-btn").forEach((btn) => {
+      btn.addEventListener("click", () => setView(btn.dataset.view));
+    });
+  }
+
+  function initLogin() {
+    const form = qs("#loginForm");
+    if (form) {
+      form.setAttribute("novalidate", "novalidate");
+      form.addEventListener("submit", (event) => {
+        event.stopPropagation();
+        event.preventDefault();
+        dbg_("submit login");
+        onLoginClick_();
+      });
+    }
+
+    const pinInput = qs("#pin");
+    if (pinInput) {
+      pinInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          dbg_("keydown enter login");
+          onLoginClick_();
+        }
+      });
+    }
+
+    const loginBtn = qs("#loginBtn");
+    if (loginBtn) {
+      if (!loginBtn.dataset.bound) {
+        loginBtn.dataset.bound = "true";
+        loginBtn.addEventListener("click", (event) => {
+          event.preventDefault();
+          dbg_("CLICK login");
+          onLoginClick_();
+        });
+      }
+    }
+
+    toggleDebugBox_();
+  }
+
+  function initLogout() {
+    const btn = qs("#logoutBtn");
+    if (btn) btn.addEventListener("click", () => logout());
+  }
+
+  function openProfileSheet() {
+    const backdrop = qs("#profileSheetBackdrop");
+    if (!backdrop) return;
+    backdrop.hidden = false;
+  }
+
+  function closeProfileSheet() {
+    const backdrop = qs("#profileSheetBackdrop");
+    if (!backdrop) return;
+    backdrop.hidden = true;
+  }
+
+  function initProfileSheet() {
+    const backdrop = qs("#profileSheetBackdrop");
+    const sheet = qs("#profileSheet");
+    const closeBtn = qs("#closeProfileSheet");
+    const profileBtn = qs("#btnProfile");
+    if (backdrop) backdrop.hidden = true;
+    if (profileBtn) profileBtn.addEventListener("click", openProfileSheet);
+    if (closeBtn) closeBtn.addEventListener("click", closeProfileSheet);
+    if (backdrop && sheet) {
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) {
+          closeProfileSheet();
+        }
+      });
+    }
+  }
+
+  function showLogin_(message) {
+    applyLoggedOutUi();
+    renderLogin();
+    if (message) showLoginError(message);
+  }
+
+  function initAuth() {
+    const saved = localStorage.getItem(LS_TOKEN);
+    AppState.token = saved && String(saved).trim() ? String(saved).trim() : null;
+    if (!AppState.token) {
+      showLogin_();
+      return;
+    }
+
+    runBootstrap_();
+  }
+
+  async function initApp() {
+    initLogin();
+    initAuth();
+  }
+
+  document.addEventListener("DOMContentLoaded", initApp);
+</script>
