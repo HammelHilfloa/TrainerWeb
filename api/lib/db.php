@@ -39,8 +39,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   stundensatz DECIMAL(10,2),
   notizen TEXT,
   created_at DATETIME NOT NULL,
-  updated_at DATETIME NOT NULL
+  updated_at DATETIME NOT NULL,
+  expires_at DATETIME NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 SQL;
     $pdo->exec($sql);
+
+    $stmt = $pdo->prepare("SHOW COLUMNS FROM sessions LIKE 'expires_at'");
+    $stmt->execute();
+    if (!$stmt->fetch()) {
+        $pdo->exec('ALTER TABLE sessions ADD COLUMN expires_at DATETIME NULL');
+    }
 }

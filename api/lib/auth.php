@@ -8,12 +8,16 @@ require_once __DIR__ . '/utils.php';
 function save_session(string $token, array $data): void
 {
     $pdo = db();
-    $now = (new DateTimeImmutable())->format('Y-m-d H:i:s');
+    $nowDt = new DateTimeImmutable();
+    $now = $nowDt->format('Y-m-d H:i:s');
+    $ttl = (int)cfg('SESSION_TTL_SECONDS', 60 * 60 * 8);
+    $expiresAt = $nowDt->modify(sprintf('+%d seconds', max(0, $ttl)))->format('Y-m-d H:i:s');
     $stmt = $pdo->prepare(
-        'INSERT INTO sessions (token, trainer_id, email, name, is_admin, rolle_standard, stundensatz, notizen, created_at, updated_at)
-         VALUES (:token, :trainer_id, :email, :name, :is_admin, :rolle_standard, :stundensatz, :notizen, :created_at, :updated_at)
+        'INSERT INTO sessions (token, trainer_id, email, name, is_admin, rolle_standard, stundensatz, notizen, created_at, updated_at, expires_at)
+         VALUES (:token, :trainer_id, :email, :name, :is_admin, :rolle_standard, :stundensatz, :notizen, :created_at, :updated_at, :expires_at)
          ON DUPLICATE KEY UPDATE email = VALUES(email), name = VALUES(name), is_admin = VALUES(is_admin),
-         rolle_standard = VALUES(rolle_standard), stundensatz = VALUES(stundensatz), notizen = VALUES(notizen), updated_at = VALUES(updated_at)'
+         rolle_standard = VALUES(rolle_standard), stundensatz = VALUES(stundensatz), notizen = VALUES(notizen), updated_at = VALUES(updated_at),
+         expires_at = VALUES(expires_at)'
     );
     $stmt->execute([
         ':token' => $token,
@@ -26,6 +30,7 @@ function save_session(string $token, array $data): void
         ':notizen' => $data['notizen'] ?? '',
         ':created_at' => $now,
         ':updated_at' => $now,
+        ':expires_at' => $expiresAt,
     ]);
 }
 
@@ -40,6 +45,24 @@ function get_session(string $token): ?array
     $row = $stmt->fetch();
     if (!$row) {
         return null;
+    }
+    $expiresAtRaw = $row['expires_at'] ?? null;
+    if ($expiresAtRaw) {
+        $expiresAt = date_create_immutable((string)$expiresAtRaw);
+        if ($expiresAt && $expiresAt <= new DateTimeImmutable()) {
+            clear_session($token);
+            return null;
+        }
+    } else {
+        $ttl = (int)cfg('SESSION_TTL_SECONDS', 60 * 60 * 8);
+        if ($ttl > 0) {
+            $base = $row['updated_at'] ?? $row['created_at'] ?? null;
+            $baseDt = $base ? date_create_immutable((string)$base) : null;
+            if ($baseDt && $baseDt->modify(sprintf('+%d seconds', $ttl)) <= new DateTimeImmutable()) {
+                clear_session($token);
+                return null;
+            }
+        }
     }
     return [
         'trainer_id' => (string)$row['trainer_id'],
