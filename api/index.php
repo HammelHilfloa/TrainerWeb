@@ -94,6 +94,45 @@ function handle_list_active_trainer_names(array $body = []): void
     json_response(['ok' => true, 'items' => $items, 'names' => $names]);
 }
 
+function find_trainer_matches(array $trainers, string $identifier, bool $nameOnly): array
+{
+    $search = trim($identifier);
+    if ($search === '') {
+        return [];
+    }
+
+    if (!$nameOnly) {
+        foreach ($trainers as $row) {
+            if ((string)$row['trainer_id'] === $search) {
+                return [$row];
+            }
+        }
+    }
+
+    $needle = normalize_name($search);
+    $matches = [];
+    foreach ($trainers as $row) {
+        if (normalize_name((string)$row['name']) === $needle) {
+            $matches[] = $row;
+        }
+    }
+    return $matches;
+}
+
+function build_login_candidates(array $matches, bool $includeEmail): array
+{
+    return array_map(function ($row) use ($includeEmail) {
+        $candidate = [
+            'trainer_id' => (string)$row['trainer_id'],
+            'name' => (string)$row['name'],
+        ];
+        if ($includeEmail) {
+            $candidate['email'] = (string)($row['email'] ?? '');
+        }
+        return $candidate;
+    }, $matches);
+}
+
 function handle_login(array $body): void
 {
     $identifier = trim((string)param($body, 'identifier', ''));
@@ -103,31 +142,13 @@ function handle_login(array $body): void
     $stmt->execute();
     $trainers = $stmt->fetchAll();
 
-    $matches = [];
-    foreach ($trainers as $row) {
-        if ((string)$row['trainer_id'] === $identifier) {
-            $matches = [$row];
-            break;
-        }
-    }
-    if (!$matches) {
-        $needle = normalize_name($identifier);
-        foreach ($trainers as $row) {
-            if (normalize_name((string)$row['name']) === $needle) {
-                $matches[] = $row;
-            }
-        }
-    }
+    $matches = find_trainer_matches($trainers, $identifier, false);
 
     if (!$matches) {
         json_response(['ok' => false, 'error' => 'Trainer nicht gefunden.']);
     }
     if (count($matches) > 1) {
-        $candidates = array_map(fn($row) => [
-            'trainer_id' => (string)$row['trainer_id'],
-            'name' => (string)$row['name'],
-        ], $matches);
-        json_response(['ok' => false, 'error' => 'Name nicht eindeutig.', 'candidates' => $candidates]);
+        json_response(['ok' => false, 'error' => 'Name nicht eindeutig.', 'candidates' => build_login_candidates($matches, false)]);
     }
 
     $trainer = $matches[0];
@@ -143,18 +164,13 @@ function handle_login_name(array $body): void
     $stmt->execute();
     $trainers = $stmt->fetchAll();
 
-    $needle = normalize_name($name);
-    $matches = array_values(array_filter($trainers, fn($row) => normalize_name((string)$row['name']) === $needle));
+    $matches = find_trainer_matches($trainers, $name, true);
 
     if (!$matches) {
         json_response(['ok' => false, 'error' => 'Trainer nicht gefunden.']);
     }
     if (count($matches) > 1) {
-        $candidates = array_map(fn($row) => [
-            'trainer_id' => (string)$row['trainer_id'],
-            'name' => (string)$row['name'],
-        ], $matches);
-        json_response(['ok' => false, 'error' => 'Name nicht eindeutig.', 'candidates' => $candidates]);
+        json_response(['ok' => false, 'error' => 'Name nicht eindeutig.', 'candidates' => build_login_candidates($matches, true)]);
     }
 
     json_response(perform_login($matches[0], $pin));
