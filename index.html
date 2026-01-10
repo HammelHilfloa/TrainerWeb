@@ -44,7 +44,12 @@ $appGlobals = [
   <body class="logged-out">
     <div id="screen-login">
       <main>
-        <section id="loginView" class="card">
+        <section id="loginView" class="card login-card">
+          <div class="login-brand">
+            <div class="logo" aria-hidden="true">TT</div>
+            <h1>TrainerTool</h1>
+            <p>Das Trainertool des KSV Homberg</p>
+          </div>
           <h2>Login</h2>
           <p class="muted">Bitte gib deinen Namen und PIN ein.</p>
           <form id="loginForm" novalidate>
@@ -65,6 +70,9 @@ $appGlobals = [
             </div>
             <button class="btn" type="button" id="loginBtn">Einloggen</button>
           </form>
+          <div class="login-actions">
+            <button class="link-btn" type="button">Passwort vergessen?</button>
+          </div>
           <div id="loginError" class="login-error" hidden></div>
           <pre id="loginDebug" class="login-debug" hidden></pre>
           <pre id="debugBox" style="display:none; white-space:pre-wrap; font-size:12px;"></pre>
