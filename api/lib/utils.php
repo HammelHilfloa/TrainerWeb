@@ -63,6 +63,16 @@ function create_token(): string
     return rtrim(strtr(base64_encode(random_bytes(24)), '+/', '-_'), '=');
 }
 
+function generate_pin(int $length = 4): string
+{
+    $length = max(4, min(8, $length));
+    $digits = '';
+    for ($i = 0; $i < $length; $i += 1) {
+        $digits .= (string)random_int(0, 9);
+    }
+    return $digits;
+}
+
 function hash_pin(string $pin): string
 {
     $pin = trim($pin);
