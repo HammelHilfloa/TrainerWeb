@@ -269,35 +269,184 @@
     }
   }
 
-  function apiCall(name, ...args) {
-    return new Promise((resolve) => {
-      dbg_("apiCall start", { name, argsPreview: args.map((arg) => typeof arg) });
-      google.script.run
-        .withSuccessHandler((res) => {
-          dbg_("apiCall success", { name, res });
-          resolve(res);
-        })
-        .withFailureHandler((err) => {
-          const message = err && err.message ? err.message : String(err || "Unbekannter Fehler");
-          dbg_("apiCall failure", { name, message });
-          resolve({ ok: false, error: message });
-        })[name](...args);
+  const API_BASE = window.APP_CONFIG?.apiBase || "/api";
+  const API_ROUTES = {
+    apiListActiveTrainers: { method: "GET", path: "/trainers/active" },
+    apiListActiveTrainerNames: { method: "GET", path: "/trainers/active/names" },
+    apiLogin: { method: "POST", path: "/login", body: (identifier, pin) => ({ identifier, pin }) },
+    apiLoginByName: { method: "POST", path: "/login/name", body: (name, pin) => ({ name, pin }) },
+    apiLogout: { method: "POST", path: "/logout", body: (token) => ({ token }) },
+    apiBootstrap: { method: "GET", path: "/bootstrap", query: (token) => ({ token }) },
+    apiGetMyProfile: { method: "GET", path: "/me", query: (token) => ({ token }) },
+    apiUpdateMyProfile: { method: "PUT", path: "/me", body: (token, payload) => ({ token, ...(payload || {}) }) },
+    apiChangeMyPin: { method: "POST", path: "/me/pin", body: (token, oldPin, newPin) => ({ token, oldPin, newPin }) },
+    apiTrainingDetails: {
+      method: "GET",
+      path: (token, trainingId) => `/trainings/${encodeURIComponent(trainingId)}`,
+      query: (token) => ({ token }),
+    },
+    apiEnroll: {
+      method: "POST",
+      path: (token, trainingId) => `/trainings/${encodeURIComponent(trainingId)}/enroll`,
+      body: (token) => ({ token }),
+    },
+    apiWithdraw: {
+      method: "POST",
+      path: (token, einteilungId) => `/enrollments/${encodeURIComponent(einteilungId)}/withdraw`,
+      body: (token) => ({ token }),
+    },
+    apiCheckin: {
+      method: "POST",
+      path: (token, einteilungId) => `/enrollments/${encodeURIComponent(einteilungId)}/checkin`,
+      body: (token, einteilungId, mode) => ({ token, mode }),
+    },
+    apiAdminSetTrainingStatus: {
+      method: "POST",
+      path: (token, trainingId) => `/trainings/${encodeURIComponent(trainingId)}/status`,
+      body: (token, trainingId, status, reason) => ({ token, status, reason }),
+    },
+    apiTurniereList: { method: "GET", path: "/turniere", query: (token) => ({ token }) },
+    apiTurnierDetails: {
+      method: "GET",
+      path: (token, turnierId) => `/turniere/${encodeURIComponent(turnierId)}`,
+      query: (token) => ({ token }),
+    },
+    apiTurnierEnroll: {
+      method: "POST",
+      path: (token, turnierId) => `/turniere/${encodeURIComponent(turnierId)}/enroll`,
+      body: (token) => ({ token }),
+    },
+    apiTurnierWithdraw: {
+      method: "POST",
+      path: (token, turnierEinsatzId) => `/turnier-einsaetze/${encodeURIComponent(turnierEinsatzId)}/withdraw`,
+      body: (token) => ({ token }),
+    },
+    apiTurnierSetUnavailable: {
+      method: "POST",
+      path: (token, turnierId) => `/turniere/${encodeURIComponent(turnierId)}/unavailable`,
+      body: (token, turnierId, grund) => ({ token, grund }),
+    },
+    apiTurnierUnsetUnavailable: {
+      method: "DELETE",
+      path: (token, turnierId) => `/turniere/${encodeURIComponent(turnierId)}/unavailable`,
+      body: (token) => ({ token }),
+    },
+    apiTurnierCheckin: {
+      method: "POST",
+      path: (token, turnierId) => `/turniere/${encodeURIComponent(turnierId)}/checkin`,
+      body: (token, turnierId, kmGesamt) => ({ token, kmGesamt }),
+    },
+    apiAdminDashboard: { method: "GET", path: "/admin/dashboard", query: (token) => ({ token }) },
+    apiAdminListTrainings: { method: "GET", path: "/admin/trainings", query: (token, filters) => ({ token, ...(filters || {}) }) },
+    apiAdminUpsertTraining: { method: "POST", path: "/admin/trainings", body: (token, payload) => ({ token, ...(payload || {}) }) },
+    apiAdminDeleteTraining: {
+      method: "DELETE",
+      path: (token, trainingId) => `/admin/trainings/${encodeURIComponent(trainingId)}`,
+      body: (token) => ({ token }),
+    },
+    apiAdminUpsertTrainingPlan: {
+      method: "POST",
+      path: (token, trainingId) => `/admin/trainings/${encodeURIComponent(trainingId)}/plan`,
+      body: (token, trainingId, payload) => ({ token, ...(payload || {}) }),
+    },
+    apiAdminDeleteTrainingPlan: {
+      method: "DELETE",
+      path: (token, planId) => `/admin/trainings/plan/${encodeURIComponent(planId)}`,
+      body: (token) => ({ token }),
+    },
+    apiAdminListTurniere: { method: "GET", path: "/admin/turniere", query: (token) => ({ token }) },
+    apiAdminUpsertTurnier: { method: "POST", path: "/admin/turniere", body: (token, payload) => ({ token, ...(payload || {}) }) },
+    apiAdminDeleteTurnier: {
+      method: "DELETE",
+      path: (token, turnierId) => `/admin/turniere/${encodeURIComponent(turnierId)}`,
+      body: (token) => ({ token }),
+    },
+    apiAdminListRoles: { method: "GET", path: "/admin/roles", query: (token) => ({ token }) },
+    apiAdminListTrainers: { method: "GET", path: "/admin/trainers", query: (token) => ({ token }) },
+    apiAdminUpsertTrainer: { method: "POST", path: "/admin/trainers", body: (token, payload) => ({ token, ...(payload || {}) }) },
+    apiAdminResetTrainerPin: {
+      method: "POST",
+      path: (token, trainerId) => `/admin/trainers/${encodeURIComponent(trainerId)}/reset-pin`,
+      body: (token, trainerId, newPin) => ({ token, newPin }),
+    },
+    apiAdminBillingOverview: {
+      method: "GET",
+      path: "/admin/billing/overview",
+      query: (token, year, half) => ({ token, year, half }),
+    },
+    apiBillingHalfyear: { method: "GET", path: "/billing/halfyear", query: (token, year, half) => ({ token, year, half }) },
+    apiSetUnavailable: {
+      method: "POST",
+      path: (token, trainingId) => `/trainings/${encodeURIComponent(trainingId)}/unavailable`,
+      body: (token, trainingId, grund) => ({ token, grund }),
+    },
+    apiUnsetUnavailable: {
+      method: "DELETE",
+      path: (token, trainingId) => `/trainings/${encodeURIComponent(trainingId)}/unavailable`,
+      body: (token) => ({ token }),
+    },
+  };
+
+  function buildQueryString(params) {
+    if (!params) return "";
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === "") return;
+      searchParams.append(key, String(value));
     });
+    const query = searchParams.toString();
+    return query ? `?${query}` : "";
+  }
+
+  async function apiCall(name, ...args) {
+    dbg_("apiCall start", { name, argsPreview: args.map((arg) => typeof arg) });
+    const route = API_ROUTES[name];
+    if (!route) {
+      const error = `Unbekannter API-Aufruf: ${name}`;
+      dbg_("apiCall failure", { name, error });
+      return { ok: false, error };
+    }
+
+    const method = route.method || "GET";
+    const path = typeof route.path === "function" ? route.path(...args) : route.path;
+    const query = route.query ? route.query(...args) : null;
+    const url = `${API_BASE}${path}${buildQueryString(query)}`;
+    const headers = { "Content-Type": "application/json" };
+    const options = { method, headers };
+    if (!["GET", "HEAD"].includes(method)) {
+      const body = route.body ? route.body(...args) : {};
+      options.body = JSON.stringify(body || {});
+    }
+
+    try {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => null);
+      const payload = data && typeof data === "object" ? data : { ok: false, error: "Ungültige Serverantwort." };
+      if (!response.ok && payload.ok !== false) {
+        payload.ok = false;
+        payload.error = payload.error || "Serverfehler.";
+      }
+      dbg_("apiCall success", { name, res: payload });
+      return payload;
+    } catch (err) {
+      const message = err && err.message ? err.message : String(err || "Unbekannter Fehler");
+      dbg_("apiCall failure", { name, message });
+      return { ok: false, error: message };
+    }
   }
 
   function gasCall_(fnName, args, { onOk, onErr } = {}) {
     dbg_("gasCall start", { fnName, argsPreview: (args || []).map((arg) => typeof arg) });
-    const runner = google.script.run
-      .withSuccessHandler((res) => {
+    apiCall(fnName, ...(args || []))
+      .then((res) => {
         dbg_("gasCall success", { fnName, res });
         if (onOk) onOk(res);
       })
-      .withFailureHandler((err) => {
+      .catch((err) => {
         const msg = err && err.message ? err.message : String(err);
         dbg_("gasCall failure", { fnName, msg });
         if (onErr) onErr(msg, err);
       });
-    runner[fnName].apply(runner, args || []);
   }
 
   function apiAuthed(name, ...args) {

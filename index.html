@@ -1,3 +1,10 @@
+<?php
+$appVersion = getenv('APP_VERSION') ?: '2026-01-04-01';
+$appGlobals = [
+  'version' => $appVersion,
+  'apiBase' => getenv('APP_API_BASE') ?: '/api',
+];
+?>
 <!DOCTYPE html>
 <html lang="de" data-auth="out">
   <head>
@@ -26,9 +33,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>TrainerTool</title>
     <base target="_top" />
-    <?!= include('style'); ?>
+    <?php include __DIR__ . '/style.html'; ?>
     <script>
-      const APP_VERSION = "2026-01-04-01";
+      window.APP_CONFIG = <?php echo json_encode($appGlobals, JSON_UNESCAPED_UNICODE); ?>;
+      const APP_VERSION = window.APP_CONFIG?.version || "2026-01-04-01";
       console.info(`TrainerTool Version: ${APP_VERSION}`);
       document.documentElement.dataset.version = APP_VERSION;
     </script>
@@ -70,8 +78,8 @@
     </div>
 
     <div id="screen-app" class="app-shell" hidden>
-      <?!= include('ui_components'); ?>
-      <?!= include('ui_app'); ?>
+      <?php include __DIR__ . '/ui_components.html'; ?>
+      <?php include __DIR__ . '/ui_app.html'; ?>
     </div>
 
     <footer class="app-footer" id="appVersionFooter" aria-label="Version"></footer>

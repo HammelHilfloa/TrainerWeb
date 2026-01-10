@@ -1053,13 +1053,16 @@ function handle_admin_trainer_reset_pin(array $body, string $trainerId): void
     $token = (string)param($body, 'token', '');
     require_admin($token);
     $newPin = (string)param($body, 'newPin', '');
+    if ($newPin === '') {
+        $newPin = generate_pin();
+    }
     if (!preg_match('/^\d{4,8}$/', $newPin)) {
         json_response(['ok' => false, 'error' => 'Neue PIN muss 4–8 Ziffern haben.']);
     }
     $pdo = db();
     $stmt = $pdo->prepare('UPDATE trainer SET pin = :pin WHERE trainer_id = :id');
     $stmt->execute([':pin' => hash_pin($newPin), ':id' => $trainerId]);
-    json_response(['ok' => true]);
+    json_response(['ok' => true, 'pin' => $newPin]);
 }
 
 function handle_admin_billing_overview(array $body): void
