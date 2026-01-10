@@ -1,0 +1,2 @@
+# Restrict direct access to sensitive data exports
+Require all denied
