@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/config.php';
+
 function db(): PDO
 {
     static $pdo = null;
@@ -9,11 +11,11 @@ function db(): PDO
         return $pdo;
     }
 
-    $host = getenv('DB_HOST') ?: '127.0.0.1';
-    $port = getenv('DB_PORT') ?: '3306';
-    $name = getenv('DB_NAME') ?: 'trainerweb';
-    $user = getenv('DB_USER') ?: 'root';
-    $pass = getenv('DB_PASS') ?: '';
+    $host = (string)cfg('DB_HOST', '127.0.0.1');
+    $port = (string)cfg('DB_PORT', '3306');
+    $name = (string)cfg('DB_NAME', 'trainerweb');
+    $user = (string)cfg('DB_USER', 'root');
+    $pass = (string)cfg('DB_PASS', '');
 
     $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4', $host, $port, $name);
     $pdo = new PDO($dsn, $user, $pass, [
