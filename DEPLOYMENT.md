@@ -30,7 +30,8 @@ Wichtige Werte:
    - Importiere die Tabellen aus `database/schema.sql`.
    - Führe den Import der HTML-Tabellen mit `scripts/import_html_tables.py` aus (optional, falls Daten aus den HTML-Dateien übernommen werden sollen).
 3. **Dateien hochladen**
-   - Lade `api/`, `index.html`, `style.html`, sowie die `ui_*.html` Dateien auf den Webspace.
+   - Lege auf dem Webspace einen `public/`-Ordner an (Document Root).
+   - Lade `public/` inklusive `public/api/` hoch. Dort liegen `index.php`, `style.html` und die `ui_*.html` Dateien.
 4. **ENV konfigurieren**
    - Setze Umgebungsvariablen im Hosting-Panel oder lege `.env`/`.env.local` an.
    - Prüfe `APP_TIMEZONE` und `SESSION_TTL_SECONDS`.
