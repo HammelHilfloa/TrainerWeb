@@ -1,14 +1,19 @@
 <style>
   :root {
-    --primary: #2e7d32;
-    --primary-strong: #1b5e20;
+    --primary: #1f5f3d;
+    --primary-strong: #184a31;
     --secondary: #0f172a;
     --accent: #22c55e;
-    --bg: #f6f8fb;
+    --bg: #f3f6f1;
     --card: #ffffff;
     --muted: #6b7280;
     --border: rgba(15, 23, 42, 0.08);
-    --shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+    --shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+    --radius-lg: 18px;
+    --radius-md: 14px;
+    --appbar-height: 72px;
+    --tabbar-height: 72px;
+    --content-max: 860px;
   }
 
   * {
@@ -28,7 +33,7 @@
   }
 
   body {
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 64px);
+    padding-bottom: 0;
   }
 
   html[data-auth="out"] #screen-login {
@@ -54,6 +59,40 @@
   #screen-login {
     min-height: 100vh;
     padding: 16px;
+    display: grid;
+    place-items: center;
+  }
+
+  #loginView {
+    width: min(420px, 100%);
+  }
+
+  .login-brand {
+    display: grid;
+    place-items: center;
+    gap: 8px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .login-brand .logo {
+    width: 64px;
+    height: 64px;
+    border-radius: 20px;
+    background: rgba(31, 95, 61, 0.12);
+    color: var(--primary-strong);
+    border-color: rgba(31, 95, 61, 0.2);
+  }
+
+  .login-brand h1 {
+    margin: 0;
+    font-size: 22px;
+  }
+
+  .login-brand p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--muted);
   }
 
   #screen-login main {
@@ -66,6 +105,7 @@
     min-height: 100vh;
     display: flex;
     flex-direction: column;
+    background: var(--bg);
   }
 
   .error,
@@ -114,13 +154,16 @@
   }
 
   header.app-header {
-    position: sticky;
+    position: fixed;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 8;
-    padding: calc(env(safe-area-inset-top, 0px) + 8px) 16px 10px;
-    background: linear-gradient(135deg, rgba(46, 125, 50, 0.9), rgba(34, 197, 94, 0.85));
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 16px 10px;
+    background: linear-gradient(135deg, rgba(24, 74, 49, 0.98), rgba(31, 95, 61, 0.9));
     color: #fff;
     box-shadow: var(--shadow);
+    min-height: calc(var(--appbar-height) + env(safe-area-inset-top, 0px));
   }
 
   .header-row {
@@ -139,7 +182,7 @@
   .logo {
     width: 42px;
     height: 42px;
-    border-radius: 14px;
+    border-radius: var(--radius-md);
     background: rgba(255, 255, 255, 0.16);
     display: grid;
     place-items: center;
@@ -182,10 +225,11 @@
     font: inherit;
   }
 
-  main {
+  main.app-main {
     flex: 1;
-    padding: 16px;
-    max-width: 720px;
+    padding: calc(var(--appbar-height) + env(safe-area-inset-top, 0px) + 12px) 16px
+      calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + 18px);
+    max-width: var(--content-max);
     width: 100%;
     margin: 0 auto;
   }
@@ -193,9 +237,13 @@
   .card {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 16px;
+    border-radius: var(--radius-lg);
+    padding: 18px;
     box-shadow: var(--shadow);
+  }
+
+  .card.inner {
+    margin-top: 12px;
   }
 
   .card h2 {
@@ -228,6 +276,15 @@
     font-size: 14px;
   }
 
+  .error-box {
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid #fca5a5;
+    background: #fef2f2;
+    color: #991b1b;
+    font-weight: 600;
+  }
+
   .form-error[hidden] {
     display: none !important;
   }
@@ -235,12 +292,25 @@
   input {
     width: 100%;
     padding: 12px;
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border);
     font-size: 16px;
     background: #fff;
   }
 
+  textarea,
+  select {
+    width: 100%;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    font-size: 16px;
+    background: #fff;
+    font-family: inherit;
+  }
+
+  textarea:focus,
+  select:focus,
   input:focus {
     outline: 2px solid rgba(34, 197, 94, 0.25);
     border-color: rgba(34, 197, 94, 0.35);
@@ -263,6 +333,13 @@
   .candidate-list .btn {
     flex: 1 1 45%;
     min-width: 140px;
+  }
+
+  .info-box {
+    padding: 12px 14px;
+    border-radius: var(--radius-md);
+    background: rgba(31, 95, 61, 0.08);
+    border: 1px solid rgba(31, 95, 61, 0.2);
   }
 
   .trainer-admin-grid {
@@ -303,8 +380,8 @@
 
   .btn {
     border: none;
-    border-radius: 12px;
-    padding: 12px;
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
     font-weight: 700;
     font-size: 15px;
     cursor: pointer;
@@ -330,14 +407,15 @@
   .bottom-nav {
     position: fixed;
     inset: auto 0 0 0;
-    padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 8px);
-    background: rgba(255, 255, 255, 0.95);
-    border-top: 1px solid var(--border);
+    padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+    background: linear-gradient(135deg, rgba(24, 74, 49, 0.98), rgba(31, 95, 61, 0.95));
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 8px;
-    box-shadow: 0 -4px 22px rgba(15, 23, 42, 0.12);
+    box-shadow: 0 -6px 22px rgba(15, 23, 42, 0.16);
     z-index: 7;
+    min-height: var(--tabbar-height);
   }
 
   .nav-btn {
@@ -347,14 +425,31 @@
     display: grid;
     gap: 4px;
     justify-items: center;
-    color: var(--muted);
-    font-size: 13px;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 12px;
     border-radius: 12px;
   }
 
+  .nav-icon {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+  }
+
+  .nav-icon svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+  }
+
+  .nav-label {
+    font-weight: 600;
+  }
+
   .nav-btn.active {
-    background: rgba(46, 125, 50, 0.12);
-    color: var(--primary-strong);
+    background: rgba(255, 255, 255, 0.18);
+    color: #fff;
     font-weight: 700;
   }
 
@@ -362,24 +457,29 @@
     display: flex;
     gap: 8px;
     width: 100%;
+    background: rgba(15, 23, 42, 0.04);
+    padding: 4px;
+    border-radius: 999px;
   }
 
   .segmented button {
     flex: 1;
-    padding: 12px 14px;
+    padding: 10px 14px;
     min-height: 44px;
-    border-radius: 14px;
-    border: 1px solid rgba(15, 23, 42, 0.16);
-    background: #fff;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    background: transparent;
     font-weight: 600;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    color: var(--muted);
+    box-shadow: none;
     transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
   }
 
   .segmented button.active {
-    background: rgba(16, 185, 129, 0.15);
+    background: #fff;
     border-color: rgba(16, 185, 129, 0.35);
+    color: var(--secondary);
     box-shadow: 0 6px 16px rgba(16, 185, 129, 0.2);
   }
 
@@ -393,9 +493,36 @@
   }
 
   .switch input {
-    width: 22px;
-    height: 22px;
-    accent-color: var(--primary);
+    appearance: none;
+    width: 44px;
+    height: 24px;
+    border-radius: 999px;
+    border: 1px solid rgba(15, 23, 42, 0.15);
+    background: rgba(15, 23, 42, 0.08);
+    position: relative;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+
+  .switch input::after {
+    content: "";
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.2);
+    transition: transform 120ms ease;
+  }
+
+  .switch input:checked {
+    background: rgba(34, 197, 94, 0.5);
+    border-color: rgba(34, 197, 94, 0.6);
+  }
+
+  .switch input:checked::after {
+    transform: translateX(20px);
   }
 
   .sum-grid {
@@ -407,7 +534,7 @@
 
   .sum-box {
     padding: 12px 14px;
-    border-radius: 12px;
+    border-radius: var(--radius-md);
     border: 1px solid var(--border);
     background: #f8fafc;
     display: grid;
@@ -424,7 +551,7 @@
 
   .toast {
     position: fixed;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+    bottom: calc(var(--tabbar-height) + env(safe-area-inset-bottom, 0px) + 12px);
     left: 50%;
     transform: translateX(-50%);
     padding: 12px 14px;
@@ -493,6 +620,11 @@
     flex-direction: column;
     gap: 12px;
     margin-bottom: 12px;
+    padding: 12px;
+    border-radius: var(--radius-lg);
+    background: #fff;
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
   }
 
   .filter-row {
@@ -512,7 +644,7 @@
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
-    background: rgba(46, 125, 50, 0.08);
+    background: rgba(31, 95, 61, 0.08);
     border-radius: 14px;
     border: 1px solid var(--border);
     cursor: pointer;
@@ -558,15 +690,27 @@
   }
 
   .badge.info {
-    background: rgba(46, 125, 50, 0.08);
+    background: rgba(31, 95, 61, 0.12);
     color: var(--primary-strong);
-    border-color: rgba(46, 125, 50, 0.24);
+    border-color: rgba(31, 95, 61, 0.28);
   }
 
   .badge.danger {
     background: rgba(185, 28, 28, 0.08);
     color: #991b1b;
     border-color: rgba(185, 28, 28, 0.25);
+  }
+
+  .badge.warning {
+    background: rgba(217, 119, 6, 0.12);
+    color: #b45309;
+    border-color: rgba(217, 119, 6, 0.3);
+  }
+
+  .badge.success {
+    background: rgba(34, 197, 94, 0.12);
+    color: #15803d;
+    border-color: rgba(34, 197, 94, 0.3);
   }
 
   .badge-stack {
@@ -639,6 +783,17 @@
     min-width: 120px;
   }
 
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .actions .btn {
+    flex: 1 1 140px;
+  }
+
   .training-card.needs-attention {
     border-color: rgba(34, 197, 94, 0.4);
     box-shadow: 0 14px 28px rgba(34, 197, 94, 0.15);
@@ -657,9 +812,9 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 10px 12px;
-    border-radius: 12px;
-    background: rgba(15, 23, 42, 0.03);
+    padding: 12px;
+    border-radius: var(--radius-md);
+    background: rgba(15, 23, 42, 0.04);
   }
 
   .list-row {
@@ -715,6 +870,18 @@
     padding-top: 12px;
   }
 
+  .pill {
+    padding: 10px 12px;
+    border-radius: 999px;
+    background: rgba(31, 95, 61, 0.08);
+    border: 1px solid rgba(31, 95, 61, 0.2);
+    font-weight: 600;
+    margin-top: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .details-block {
     margin-top: 8px;
   }
@@ -753,6 +920,16 @@
     flex-wrap: wrap;
   }
 
+  .divider {
+    height: 1px;
+    background: var(--border);
+    border-radius: 999px;
+  }
+
+  .admin-subnav.segmented {
+    margin-bottom: 16px;
+  }
+
   .list .name {
     font-weight: 700;
   }
@@ -769,8 +946,8 @@
   .plan-box {
     padding: 12px;
     border: 1px dashed var(--border);
-    border-radius: 12px;
-    background: rgba(15, 23, 42, 0.02);
+    border-radius: var(--radius-md);
+    background: rgba(31, 95, 61, 0.05);
   }
 
   .plan-title {
@@ -865,6 +1042,19 @@
     gap: 12px;
   }
 
+  .profile-summary .list li {
+    background: #fff;
+    border: 1px solid var(--border);
+  }
+
+  .text-strong {
+    font-weight: 700;
+  }
+
+  .small {
+    font-size: 12px;
+  }
+
   .modal-header,
   .modal-footer {
     padding: 14px 16px;
@@ -908,6 +1098,12 @@
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 12px;
     margin-top: 12px;
+  }
+
+  @media (min-width: 720px) {
+    .kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   .kpi-card .kpi-value {
@@ -973,5 +1169,63 @@
 
   .table-row .cell.strong {
     font-weight: 700;
+  }
+
+  .item {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background: #fff;
+  }
+
+  .item + .item {
+    margin-top: 8px;
+  }
+
+  .itemTitle {
+    font-weight: 700;
+  }
+
+  .itemSub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 4px;
+  }
+
+  .itemActions {
+    font-weight: 700;
+    color: var(--primary-strong);
+  }
+
+  .badges {
+    margin-top: 6px;
+  }
+
+  .login-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .link-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: var(--primary);
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+  }
+
+  @media (min-width: 960px) {
+    main.app-main {
+      padding-left: 24px;
+      padding-right: 24px;
+    }
   }
 </style>
