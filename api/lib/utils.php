@@ -2,15 +2,6 @@
 
 declare(strict_types=1);
 
-const CFG = [
-    'SESSION_TTL_SECONDS' => 60 * 60 * 8,
-];
-
-function cfg(string $key, $default = null)
-{
-    return CFG[$key] ?? $default;
-}
-
 function json_response(array $payload, int $status = 200): void
 {
     http_response_code($status);
