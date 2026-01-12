@@ -3,8 +3,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/api/lib/db.php';
 
-$databaseDir = realpath(__DIR__ . '/../database');
-$schemaPath = realpath(__DIR__ . '/../database/schema.sql');
+$databaseDir = realpath(__DIR__ . '/database');
+$schemaPath = realpath(__DIR__ . '/database/schema.sql');
 
 if ($databaseDir === false) {
     http_response_code(500);
@@ -27,17 +27,29 @@ ksort($availableMap, SORT_NATURAL | SORT_FLAG_CASE);
 
 $seedResults = [];
 $seedErrors = [];
+$seedLog = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'seed') {
+    $seedLog[] = 'Seed-Import gestartet.';
     $seedErrors = validate_seed_requirements($schemaTables, $schemaPath);
     if (!$seedErrors) {
         $pdo = db();
         foreach ($availableMap as $fileName => $filePath) {
+            $seedLog[] = sprintf('Importiere %s...', $fileName);
             $result = import_html_seed($pdo, $filePath, $schemaTables);
             if ($result['status'] === 'error') {
                 $seedErrors[] = $result['message'];
+                $seedLog[] = $result['message'];
             } else {
                 $seedResults[] = $result['message'];
+                $seedLog[] = $result['message'];
             }
+        }
+        if (!$availableMap) {
+            $seedLog[] = 'Keine HTML-Dateien im database-Ordner gefunden.';
+        }
+    } else {
+        foreach ($seedErrors as $error) {
+            $seedLog[] = $error;
         }
     }
 }
@@ -338,7 +350,7 @@ function validate_seed_requirements(array $schemaTables, ?string $schemaPath): a
   </head>
   <body>
     <h1>Database Seed Import</h1>
-    <p>Importiere die HTML-Exports aus dem <code>database</code>-Ordner in die Datenbank.</p>
+    <p>Importiere die HTML-Exports aus dem <code>public/database</code>-Ordner in die Datenbank.</p>
     <?php if ($seedErrors) { ?>
       <div class="alert alert-error">
         <strong>Fehler beim Import:</strong>
@@ -355,6 +367,16 @@ function validate_seed_requirements(array $schemaTables, ?string $schemaPath): a
         <ul>
           <?php foreach ($seedResults as $result) { ?>
             <li><?php echo htmlspecialchars($result, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></li>
+          <?php } ?>
+        </ul>
+      </div>
+    <?php } ?>
+    <?php if ($seedLog) { ?>
+      <div class="alert alert-success">
+        <strong>Seed-Protokoll:</strong>
+        <ul>
+          <?php foreach ($seedLog as $logEntry) { ?>
+            <li><?php echo htmlspecialchars($logEntry, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?></li>
           <?php } ?>
         </ul>
       </div>
