@@ -1,5 +1,5 @@
 <?php
-$databaseDir = realpath(__DIR__ . '/../database');
+$databaseDir = realpath(__DIR__ . '/database');
 
 if ($databaseDir === false) {
     http_response_code(500);
