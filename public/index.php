@@ -20,20 +20,20 @@ if (!isLoggedIn() && $path !== '/login') {
     redirect('/login');
 }
 
-[$title, $content, $activeNav, $showMenu, $statusCode] = resolveRoute($path, $settings);
+[$title, $content, $activeNav, $showMenu, $statusCode] = resolveRoute($path, $settings, $rootPath);
 
 http_response_code($statusCode);
 
 echo renderLayout($title, $content, $settings, $activeNav, $showMenu);
 
-function resolveRoute(string $path, array $settings): array
+function resolveRoute(string $path, array $settings, string $rootPath): array
 {
     $statusCode = 200;
     $activeNav = null;
     $showMenu = false;
 
     return match ($path) {
-        '/login' => handleLogin($settings),
+        '/login' => handleLogin($settings, $rootPath),
         '/uebersicht' => ['Übersicht', renderOverview(), 'uebersicht', true, $statusCode],
         '/einsaetze' => ['Einsätze', renderEinsaetze(), 'einsaetze', false, $statusCode],
         '/abrechnung' => ['Abrechnung', renderAbrechnung(), 'abrechnung', false, $statusCode],
@@ -44,27 +44,51 @@ function resolveRoute(string $path, array $settings): array
     };
 }
 
-function handleLogin(array $settings): array
+function handleLogin(array $settings, string $rootPath): array
 {
     $error = '';
+    $name = '';
+    $pin = '';
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim((string) ($_POST['name'] ?? ''));
-        $role = (string) ($_POST['role'] ?? 'trainer');
+        $pin = trim((string) ($_POST['pin'] ?? ''));
 
-        if ($name === '') {
-            $error = 'Bitte gib deinen Namen ein.';
+        if ($name === '' || $pin === '') {
+            $error = 'Bitte gib deinen Namen und deine PIN ein.';
         } else {
-            $role = $role === 'admin' ? 'admin' : 'trainer';
-            $_SESSION['user'] = [
-                'name' => $name,
-                'role' => $role,
-            ];
-            redirect('/uebersicht');
+            $trainers = loadTrainerRecords($rootPath);
+
+            if ($trainers === []) {
+                $error = 'Trainerdaten konnten nicht geladen werden.';
+            } else {
+                $matches = array_values(array_filter($trainers, static fn (array $trainer): bool => $trainer['name'] === $name));
+                if (count($matches) > 1) {
+                    $error = 'Der Name ist nicht eindeutig. Bitte Admin kontaktieren und den Namen eindeutig hinterlegen lassen.';
+                } elseif (count($matches) === 0) {
+                    $error = 'Name oder PIN ist ungültig.';
+                } else {
+                    $trainer = $matches[0];
+                    if (!$trainer['aktiv']) {
+                        $error = 'Nur aktive Trainer:innen dürfen sich anmelden. Bitte Admin kontaktieren.';
+                    } elseif (!verifyPin($pin, $trainer['pin'])) {
+                        $error = 'Name oder PIN ist ungültig.';
+                    } else {
+                        session_regenerate_id(true);
+                        $_SESSION['user'] = [
+                            'trainer_id' => $trainer['trainer_id'],
+                            'name' => $trainer['name'],
+                            'role' => $trainer['is_admin'] ? 'admin' : 'trainer',
+                            'is_admin' => $trainer['is_admin'],
+                        ];
+                        redirect('/uebersicht');
+                    }
+                }
+            }
         }
     }
 
-    $content = renderLoginForm($settings, $error);
+    $content = renderLoginForm($settings, $error, $name);
 
     return ['Login', $content, null, false, 200];
 }
@@ -409,22 +433,116 @@ function renderNotFoundPage(): string
         . '</section>';
 }
 
-function renderLoginForm(array $settings, string $error): string
+function renderLoginForm(array $settings, string $error, string $name): string
 {
     $brandName = htmlspecialchars((string) $settings['brand_name']);
     $errorHtml = $error !== '' ? '<p class="error">' . htmlspecialchars($error) . '</p>' : '';
+    $nameValue = htmlspecialchars($name);
 
     return '<section class="card">'
         . '<h1>Login</h1>'
         . '<p class="helper">Melde dich an, um das ' . $brandName . ' zu nutzen.</p>'
+        . '<p class="helper">Der Name muss exakt wie im Trainerprofil hinterlegt sein und eindeutig sein.</p>'
         . $errorHtml
         . '<form class="login-form" method="post" action="/login">'
-        . '<div><label for="name">Name</label><input id="name" name="name" placeholder="Vorname Nachname" required></div>'
-        . '<div><label for="role">Rolle</label><select id="role" name="role">'
-        . '<option value="trainer">Trainer:in</option>'
-        . '<option value="admin">Admin</option>'
-        . '</select></div>'
+        . '<div><label for="name">Name</label><input id="name" name="name" placeholder="Vorname Nachname" value="' . $nameValue . '" required></div>'
+        . '<div><label for="pin">PIN</label><input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="one-time-code" required></div>'
         . '<button class="primary" type="submit">Weiter</button>'
+        . '<p class="helper">PIN vergessen? Bitte Admin kontaktieren. PIN-Reset folgt später im Adminbereich.</p>'
         . '</form>'
         . '</section>';
+}
+
+function verifyPin(string $inputPin, string $storedPin): bool
+{
+    if ($storedPin === '') {
+        return false;
+    }
+
+    if (str_starts_with($storedPin, 'sha256:')) {
+        $hash = base64_encode(hash('sha256', $inputPin, true));
+        return hash_equals(substr($storedPin, 7), $hash);
+    }
+
+    return hash_equals($storedPin, $inputPin);
+}
+
+function loadTrainerRecords(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/TRAINER.html');
+    if (!$rows) {
+        return [];
+    }
+
+    [$header, $dataRows] = $rows;
+    $normalizedHeader = array_map(static fn (string $cell): string => strtolower(trim($cell)), $header);
+
+    $records = [];
+    foreach ($dataRows as $row) {
+        $row = array_pad($row, count($normalizedHeader), '');
+        $assoc = array_combine($normalizedHeader, $row);
+        if (!$assoc) {
+            continue;
+        }
+
+        $name = trim((string) ($assoc['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+
+        $records[] = [
+            'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
+            'name' => $name,
+            'aktiv' => parseBoolean($assoc['aktiv'] ?? ''),
+            'pin' => trim((string) ($assoc['pin'] ?? '')),
+            'is_admin' => parseBoolean($assoc['is_admin'] ?? ''),
+        ];
+    }
+
+    return $records;
+}
+
+function parseBoolean(string $value): bool
+{
+    $normalized = strtolower(trim($value));
+    return in_array($normalized, ['1', 'true', 'wahr', 'yes', 'ja'], true);
+}
+
+function loadHtmlRows(string $path): ?array
+{
+    $html = file_get_contents($path);
+    if ($html === false) {
+        return null;
+    }
+
+    libxml_use_internal_errors(true);
+    $doc = new DOMDocument();
+    $doc->loadHTML($html);
+    libxml_clear_errors();
+
+    $xpath = new DOMXPath($doc);
+    $table = $xpath->query('//table')->item(0);
+    if (!$table) {
+        return null;
+    }
+
+    $rows = [];
+    foreach ($xpath->query('.//tr', $table) as $row) {
+        $cells = [];
+        foreach ($xpath->query('./th|./td', $row) as $cell) {
+            $cells[] = trim($cell->textContent);
+        }
+        if ($cells) {
+            $rows[] = $cells;
+        }
+    }
+
+    if (count($rows) < 2) {
+        return null;
+    }
+
+    $header = $rows[0];
+    $dataRows = array_slice($rows, 1);
+
+    return [$header, $dataRows];
 }
