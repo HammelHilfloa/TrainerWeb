@@ -1,0 +1,2 @@
+-- Beispieldaten für das KSV Homberg Trainertool
+-- Optionaler Import im Installer.
