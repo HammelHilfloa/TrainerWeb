@@ -1,0 +1,2 @@
+-- Datenbankschema für das KSV Homberg Trainertool
+-- Wird später vom Installer importiert.
