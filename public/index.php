@@ -446,6 +446,37 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             flex-wrap: wrap;
             gap: 0.5rem;
         }
+        .assignment-grid,
+        .trainer-list {
+            display: grid;
+            gap: 0.75rem;
+        }
+        .assignment-row,
+        .trainer-card {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            background: #fff;
+        }
+        .assignment-main,
+        .trainer-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
+        .assignment-actions,
+        .trainer-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            align-items: center;
+        }
         .flash {
             border-radius: 12px;
             padding: 0.8rem 1rem;
@@ -466,6 +497,17 @@ function renderLayout(string $title, string $content, array $settings, ?string $
         .error {
             color: #b42318;
             font-weight: 600;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
         }
     </style>
 </head>
@@ -544,12 +586,17 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $trainingGroups = collectTrainingGroups($trainings);
     $statusOptions = collectTrainingStatuses($trainings);
     $assignments = loadTrainingAssignments($rootPath);
+    $assignmentRecords = loadAssignmentRecords($rootPath);
+    $trainers = loadTrainerRecords($rootPath);
+    $roleRates = loadRoleRates($rootPath);
 
     $filterStart = trim((string) ($_GET['filter_start'] ?? ''));
     $filterEnd = trim((string) ($_GET['filter_end'] ?? ''));
     $filterGroup = trim((string) ($_GET['filter_group'] ?? ''));
     $filterStatus = trim((string) ($_GET['filter_status'] ?? ''));
     $editId = trim((string) ($_GET['edit'] ?? ''));
+    $assignTrainingId = trim((string) ($_GET['assign_training_id'] ?? ''));
+    $trainerSearch = trim((string) ($_GET['trainer_search'] ?? ''));
 
     $filteredTrainings = array_values(array_filter($trainings, static function (array $training) use ($filterStart, $filterEnd, $filterGroup, $filterStatus): bool {
         if ($filterGroup !== '' && $training['gruppe'] !== $filterGroup) {
@@ -671,6 +718,188 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $createSection = renderTrainingForm('Neues Training anlegen', 'create', $newTraining, $statusOptions);
     $createSeriesSection = renderTrainingSeriesForm($statusOptions);
 
+    $sortedTrainings = $trainings;
+    usort($sortedTrainings, static function (array $a, array $b): int {
+        $dateA = parseDateToTimestamp($a['datum']) ?? 0;
+        $dateB = parseDateToTimestamp($b['datum']) ?? 0;
+        if ($dateA === $dateB) {
+            return strcmp($a['start'], $b['start']);
+        }
+        return $dateA <=> $dateB;
+    });
+
+    if ($assignTrainingId === '' && $sortedTrainings !== []) {
+        $assignTrainingId = $sortedTrainings[0]['training_id'];
+    }
+    $assignTraining = $assignTrainingId !== '' ? findTrainingById($trainings, $assignTrainingId) : null;
+
+    $roleNames = array_keys($roleRates);
+    if ($roleNames === []) {
+        $roleNames = array_values(array_unique(array_filter(array_map(static fn (array $trainer): string => $trainer['rolle_standard'] ?? '', $trainers))));
+    }
+    sort($roleNames, SORT_NATURAL | SORT_FLAG_CASE);
+
+    $trainingSelectOptions = '<option value="">Training auswählen</option>';
+    foreach ($sortedTrainings as $training) {
+        $trainingId = $training['training_id'];
+        $selected = $trainingId === $assignTrainingId ? ' selected' : '';
+        $label = buildTrainingLabel($training);
+        $trainingSelectOptions .= '<option value="' . htmlspecialchars($trainingId) . '"' . $selected . '>' . $label . '</option>';
+    }
+
+    $trainerById = [];
+    foreach ($trainers as $trainer) {
+        $trainerById[$trainer['trainer_id']] = $trainer;
+    }
+
+    $assignmentsForTraining = [];
+    $assignedTrainerIds = [];
+    if ($assignTrainingId !== '') {
+        foreach ($assignmentRecords as $assignment) {
+            if ($assignment['training_id'] !== $assignTrainingId) {
+                continue;
+            }
+            if ($assignment['ausgetragen_am'] !== '') {
+                continue;
+            }
+            $assignmentsForTraining[] = $assignment;
+            if ($assignment['trainer_id'] !== '') {
+                $assignedTrainerIds[$assignment['trainer_id']] = true;
+            }
+        }
+    }
+
+    usort($assignmentsForTraining, static function (array $a, array $b) use ($trainerById): int {
+        $nameA = $trainerById[$a['trainer_id']]['name'] ?? $a['trainer_id'];
+        $nameB = $trainerById[$b['trainer_id']]['name'] ?? $b['trainer_id'];
+        return strcasecmp($nameA, $nameB);
+    });
+
+    $assignmentRowsHtml = '';
+    foreach ($assignmentsForTraining as $assignment) {
+        $trainerId = $assignment['trainer_id'];
+        $trainerName = $trainerById[$trainerId]['name'] ?? $trainerId;
+        $roleValue = $assignment['rolle'] !== '' ? $assignment['rolle'] : ($trainerById[$trainerId]['rolle_standard'] ?? '');
+        $satzLabel = $assignment['satz_eur'] !== '' ? $assignment['satz_eur'] . ' €' : '—';
+        $betragLabel = $assignment['betrag_eur'] !== '' ? $assignment['betrag_eur'] . ' €' : '—';
+        $query = buildAdminQuery(['assign_training_id' => $assignTrainingId, 'trainer_search' => $trainerSearch]);
+
+        $assignmentRowsHtml .= '<div class="assignment-row">'
+            . '<div class="assignment-main">'
+            . '<strong>' . htmlspecialchars($trainerName) . '</strong>'
+            . '<span class="badge">' . htmlspecialchars($trainerId) . '</span>'
+            . '<span class="badge">Rolle: ' . htmlspecialchars($roleValue) . '</span>'
+            . '<span class="badge">Satz: ' . htmlspecialchars($satzLabel) . '</span>'
+            . '<span class="badge">Betrag: ' . htmlspecialchars($betragLabel) . '</span>'
+            . '</div>'
+            . '<div class="assignment-actions">'
+            . '<form method="post" action="/admin' . $query . '">'
+            . '<input type="hidden" name="action" value="update_assignment">'
+            . '<input type="hidden" name="einteilung_id" value="' . htmlspecialchars($assignment['einteilung_id']) . '">'
+            . '<input type="hidden" name="training_id" value="' . htmlspecialchars($assignTrainingId) . '">'
+            . '<label class="sr-only" for="role_' . htmlspecialchars($assignment['einteilung_id']) . '">Rolle</label>'
+            . '<select id="role_' . htmlspecialchars($assignment['einteilung_id']) . '" name="rolle">'
+            . renderRoleOptions($roleNames, $roleValue)
+            . '</select>'
+            . '<button class="secondary" type="submit">Rolle ändern</button>'
+            . '</form>'
+            . '<form method="post" action="/admin' . $query . '" onsubmit="return confirm(\'Einteilung entfernen?\')">'
+            . '<input type="hidden" name="action" value="remove_assignment">'
+            . '<input type="hidden" name="einteilung_id" value="' . htmlspecialchars($assignment['einteilung_id']) . '">'
+            . '<input type="hidden" name="training_id" value="' . htmlspecialchars($assignTrainingId) . '">'
+            . '<button class="danger" type="submit">Entfernen</button>'
+            . '</form>'
+            . '</div>'
+            . '</div>';
+    }
+
+    if ($assignmentRowsHtml === '') {
+        $assignmentRowsHtml = '<p class="helper">Noch keine Einteilungen für dieses Training.</p>';
+    }
+
+    $activeTrainers = array_values(array_filter($trainers, static fn (array $trainer): bool => $trainer['aktiv']));
+    usort($activeTrainers, static fn (array $a, array $b): int => strcasecmp($a['name'], $b['name']));
+
+    $filteredTrainers = array_values(array_filter($activeTrainers, static function (array $trainer) use ($trainerSearch): bool {
+        if ($trainerSearch === '') {
+            return true;
+        }
+        return stripos($trainer['name'], $trainerSearch) !== false
+            || stripos($trainer['trainer_id'], $trainerSearch) !== false;
+    }));
+
+    $trainerListHtml = '';
+    foreach ($filteredTrainers as $trainer) {
+        $trainerId = $trainer['trainer_id'];
+        $trainerName = $trainer['name'];
+        $defaultRole = $trainer['rolle_standard'] ?? '';
+        if ($defaultRole === '' && $roleNames !== []) {
+            $defaultRole = $roleNames[0];
+        }
+        $isAssigned = isset($assignedTrainerIds[$trainerId]);
+        $query = buildAdminQuery(['assign_training_id' => $assignTrainingId, 'trainer_search' => $trainerSearch]);
+
+        $trainerListHtml .= '<div class="trainer-card">'
+            . '<div class="trainer-meta">'
+            . '<strong>' . htmlspecialchars($trainerName) . '</strong>'
+            . '<span class="badge">' . htmlspecialchars($trainerId) . '</span>'
+            . ($defaultRole !== '' ? '<span class="badge">Standard: ' . htmlspecialchars($defaultRole) . '</span>' : '')
+            . ($isAssigned ? '<span class="badge success">Eingeteilt</span>' : '')
+            . '</div>'
+            . '<div class="trainer-actions">'
+            . '<form method="post" action="/admin' . $query . '">'
+            . '<input type="hidden" name="action" value="assign_trainer">'
+            . '<input type="hidden" name="training_id" value="' . htmlspecialchars($assignTrainingId) . '">'
+            . '<input type="hidden" name="trainer_id" value="' . htmlspecialchars($trainerId) . '">'
+            . '<label class="sr-only" for="assign_role_' . htmlspecialchars($trainerId) . '">Rolle</label>'
+            . '<select id="assign_role_' . htmlspecialchars($trainerId) . '" name="rolle">'
+            . renderRoleOptions($roleNames, $defaultRole)
+            . '</select>'
+            . '<button class="primary" type="submit"' . ($isAssigned || $assignTrainingId === '' ? ' disabled' : '') . '>Zuweisen</button>'
+            . '</form>'
+            . '</div>'
+            . '</div>';
+    }
+
+    if ($trainerListHtml === '') {
+        $trainerListHtml = '<p class="helper">Keine aktiven Trainer:innen gefunden.</p>';
+    }
+
+    $assignStatusHtml = '';
+    if ($assignTraining) {
+        $neededCount = (int) ($assignTraining['benoetigt_trainer'] ?? 0);
+        $assignedCount = (int) ($assignTraining['eingeteilt'] ?? 0);
+        $openCount = (int) ($assignTraining['offen'] ?? 0);
+        $assignStatusHtml = '<div class="admin-meta">'
+            . '<span class="badge">Benötigt: ' . htmlspecialchars((string) $neededCount) . '</span>'
+            . '<span class="badge success">Eingeteilt: ' . htmlspecialchars((string) $assignedCount) . '</span>'
+            . '<span class="badge warning">Offen: ' . htmlspecialchars((string) $openCount) . '</span>'
+            . '</div>';
+    }
+
+    $trainerSearchValue = htmlspecialchars($trainerSearch);
+    $assignSection = '<section class="card">'
+        . '<div class="section-title"><h2>Trainer zuweisen</h2><span class="badge">Einteilungen</span></div>'
+        . '<p class="helper">Trainings auswählen, aktive Trainer:innen suchen und Einteilungen mit Rolle verwalten.</p>'
+        . '<form class="form-grid cols-2" method="get" action="/admin">'
+        . '<div><label for="assign_training_id">Training</label><select id="assign_training_id" name="assign_training_id">' . $trainingSelectOptions . '</select></div>'
+        . '<div><label for="trainer_search">Trainer:in suchen</label><input id="trainer_search" name="trainer_search" placeholder="Name oder ID" value="' . $trainerSearchValue . '"></div>'
+        . '<div class="admin-actions">'
+        . '<button class="secondary" type="submit">Ansicht aktualisieren</button>'
+        . '<a class="button-link secondary" href="/admin?assign_training_id=' . rawurlencode($assignTrainingId) . '">Suche zurücksetzen</a>'
+        . '</div>'
+        . '</form>'
+        . $assignStatusHtml
+        . '</section>'
+        . '<section class="card">'
+        . '<div class="section-title"><h2>Aktuelle Einteilungen</h2></div>'
+        . '<div class="assignment-grid">' . $assignmentRowsHtml . '</div>'
+        . '</section>'
+        . '<section class="card">'
+        . '<div class="section-title"><h2>Aktive Trainer:innen</h2></div>'
+        . '<div class="trainer-list">' . $trainerListHtml . '</div>'
+        . '</section>';
+
     return '<section class="card">'
         . '<h1>Admin</h1>'
         . '<p class="helper">Nur Administrator:innen können diese Seite sehen. Mandant: ' . $brandName . '.</p>'
@@ -695,6 +924,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<h2>Liste</h2>'
         . '<div class="admin-list">' . $trainingsHtml . '</div>'
         . '</section>'
+        . $assignSection
         . $editSection
         . $createSection
         . $createSeriesSection;
@@ -705,6 +935,116 @@ function handleTrainingAdminPost(string $rootPath): array
     $action = trim((string) ($_POST['action'] ?? ''));
     $store = loadTrainingStore($rootPath);
     $assignments = loadTrainingAssignments($rootPath);
+
+    if ($action === 'assign_trainer') {
+        $trainingId = trim((string) ($_POST['training_id'] ?? ''));
+        $trainerId = trim((string) ($_POST['trainer_id'] ?? ''));
+        if ($trainingId === '' || $trainerId === '') {
+            return ['Training und Trainer:in müssen ausgewählt sein.', 'error', []];
+        }
+
+        $training = findTrainingById(loadTrainingRecords($rootPath), $trainingId);
+        if (!$training) {
+            return ['Training nicht gefunden.', 'error', []];
+        }
+
+        $trainer = findTrainerById(loadTrainerRecords($rootPath), $trainerId);
+        if (!$trainer) {
+            return ['Trainer:in nicht gefunden.', 'error', []];
+        }
+
+        $assignmentRecords = loadAssignmentRecords($rootPath);
+        foreach ($assignmentRecords as $assignment) {
+            if ($assignment['training_id'] === $trainingId && $assignment['trainer_id'] === $trainerId && $assignment['ausgetragen_am'] === '') {
+                return ['Trainer:in ist bereits eingeteilt.', 'error', []];
+            }
+        }
+
+        $roleRates = loadRoleRates($rootPath);
+        $role = trim((string) ($_POST['rolle'] ?? ''));
+        if ($role === '') {
+            $role = $trainer['rolle_standard'] ?? '';
+        }
+        if ($role === '' && $roleRates !== []) {
+            $role = array_key_first($roleRates);
+        }
+
+        $satz = $role !== '' && isset($roleRates[$role]) ? $roleRates[$role] : '0';
+        $assignmentId = generateAssignmentId($rootPath);
+        $record = [
+            'einteilung_id' => $assignmentId,
+            'training_id' => $trainingId,
+            'trainer_id' => $trainerId,
+            'rolle' => $role,
+            'eingetragen_am' => date('c'),
+            'ausgetragen_am' => '',
+            'attendance' => 'NEIN',
+            'checkin_am' => '',
+            'kommentar' => '',
+            'training_datum' => $training['datum'] ?? '',
+            'training_status' => $training['status'] ?? '',
+            'training_dauer_stunden' => $training['dauer_stunden'] ?? '',
+            'satz_eur' => $satz,
+            'betrag_eur' => '0',
+        ];
+
+        $assignmentStore = loadAssignmentStore($rootPath);
+        $assignmentStore['assignments'][$assignmentId] = $record;
+        saveAssignmentStore($rootPath, $assignmentStore);
+
+        return ['Trainer:in wurde eingeteilt.', 'success', []];
+    }
+
+    if ($action === 'update_assignment') {
+        $assignmentId = trim((string) ($_POST['einteilung_id'] ?? ''));
+        if ($assignmentId === '') {
+            return ['Einteilung-ID fehlt.', 'error', []];
+        }
+
+        $assignment = findAssignmentById(loadAssignmentRecords($rootPath), $assignmentId);
+        if (!$assignment) {
+            return ['Einteilung nicht gefunden.', 'error', []];
+        }
+
+        $roleRates = loadRoleRates($rootPath);
+        $role = trim((string) ($_POST['rolle'] ?? ''));
+        if ($role !== '') {
+            $assignment['rolle'] = $role;
+            $assignment['satz_eur'] = $roleRates[$role] ?? $assignment['satz_eur'];
+        }
+
+        $training = findTrainingById(loadTrainingRecords($rootPath), $assignment['training_id']);
+        if ($training) {
+            $assignment['training_datum'] = $training['datum'] ?? $assignment['training_datum'];
+            $assignment['training_status'] = $training['status'] ?? $assignment['training_status'];
+            $assignment['training_dauer_stunden'] = $training['dauer_stunden'] ?? $assignment['training_dauer_stunden'];
+        }
+
+        $assignmentStore = loadAssignmentStore($rootPath);
+        $assignmentStore['assignments'][$assignmentId] = $assignment;
+        saveAssignmentStore($rootPath, $assignmentStore);
+
+        return ['Einteilung aktualisiert.', 'success', []];
+    }
+
+    if ($action === 'remove_assignment') {
+        $assignmentId = trim((string) ($_POST['einteilung_id'] ?? ''));
+        if ($assignmentId === '') {
+            return ['Einteilung-ID fehlt.', 'error', []];
+        }
+
+        $assignment = findAssignmentById(loadAssignmentRecords($rootPath), $assignmentId);
+        if (!$assignment) {
+            return ['Einteilung nicht gefunden.', 'error', []];
+        }
+
+        $assignment['ausgetragen_am'] = date('c');
+        $assignmentStore = loadAssignmentStore($rootPath);
+        $assignmentStore['assignments'][$assignmentId] = $assignment;
+        saveAssignmentStore($rootPath, $assignmentStore);
+
+        return ['Einteilung entfernt.', 'success', []];
+    }
 
     if ($action === 'create') {
         $input = normalizeTrainingInput($_POST);
@@ -1099,6 +1439,38 @@ function trainingStatusBadge(string $status): string
     return '<span class="' . $class . '">' . htmlspecialchars($status) . '</span>';
 }
 
+function buildTrainingLabel(array $training): string
+{
+    $date = $training['datum'] ?? '';
+    $time = trim(($training['start'] ?? '') . '–' . ($training['ende'] ?? ''));
+    $group = $training['gruppe'] ?? '';
+    $label = trim($date . ' · ' . $time . ' · ' . $group);
+    if (($training['training_id'] ?? '') !== '') {
+        $label .= ' (' . $training['training_id'] . ')';
+    }
+    return htmlspecialchars($label);
+}
+
+function renderRoleOptions(array $roles, string $selected): string
+{
+    $options = '';
+    if ($roles === [] && $selected !== '') {
+        $roles = [$selected];
+    }
+    foreach ($roles as $role) {
+        $selectedAttr = $role === $selected ? ' selected' : '';
+        $options .= '<option value="' . htmlspecialchars($role) . '"' . $selectedAttr . '>' . htmlspecialchars($role) . '</option>';
+    }
+    return $options;
+}
+
+function buildAdminQuery(array $params): string
+{
+    $filtered = array_filter($params, static fn ($value): bool => $value !== null && $value !== '');
+    $query = http_build_query($filtered);
+    return $query === '' ? '' : '?' . $query;
+}
+
 function findTrainingById(array $trainings, string $trainingId): ?array
 {
     foreach ($trainings as $training) {
@@ -1109,28 +1481,39 @@ function findTrainingById(array $trainings, string $trainingId): ?array
     return null;
 }
 
+function findTrainerById(array $trainers, string $trainerId): ?array
+{
+    foreach ($trainers as $trainer) {
+        if ($trainer['trainer_id'] === $trainerId) {
+            return $trainer;
+        }
+    }
+    return null;
+}
+
+function findAssignmentById(array $assignments, string $assignmentId): ?array
+{
+    foreach ($assignments as $assignment) {
+        if ($assignment['einteilung_id'] === $assignmentId) {
+            return $assignment;
+        }
+    }
+    return null;
+}
+
 function loadTrainingAssignments(string $rootPath): array
 {
-    $rows = loadHtmlRows($rootPath . '/database/EINTEILUNGEN.html');
-    if (!$rows) {
-        return [];
-    }
-
-    [$header, $dataRows] = $rows;
-    $header = normalizeHeaderCells($header);
-
-    $trainingIndex = array_search('training_id', $header, true);
-    if ($trainingIndex === false) {
+    $records = loadAssignmentRecords($rootPath);
+    if ($records === []) {
         return [];
     }
 
     $assignments = [];
-    foreach ($dataRows as $row) {
-        $row = normalizeRowCells($header, $row);
-        $trainingId = trim((string) ($row[$trainingIndex] ?? ''));
-        if ($trainingId !== '') {
-            $assignments[$trainingId] = true;
+    foreach ($records as $assignment) {
+        if ($assignment['training_id'] === '' || $assignment['ausgetragen_am'] !== '') {
+            continue;
         }
+        $assignments[$assignment['training_id']] = true;
     }
 
     return $assignments;
@@ -1179,29 +1562,150 @@ function collectActiveAssignmentCounts(string $rootPath): array
 function loadAssignmentRecords(string $rootPath): array
 {
     $rows = loadHtmlRows($rootPath . '/database/EINTEILUNGEN.html');
-    if (!$rows) {
-        return [];
-    }
-
-    [$header, $dataRows] = $rows;
-    $header = normalizeHeaderCells($header);
-
     $records = [];
-    foreach ($dataRows as $row) {
-        $row = normalizeRowCells($header, $row);
-        $assoc = array_combine($header, $row);
-        if (!$assoc) {
-            continue;
-        }
+    if ($rows) {
+        [$header, $dataRows] = $rows;
+        $header = normalizeHeaderCells($header);
 
-        $records[] = [
-            'training_id' => trim((string) ($assoc['training_id'] ?? '')),
-            'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
-            'ausgetragen_am' => trim((string) ($assoc['ausgetragen_am'] ?? '')),
-        ];
+        foreach ($dataRows as $row) {
+            $row = normalizeRowCells($header, $row);
+            $assoc = array_combine($header, $row);
+            if (!$assoc) {
+                continue;
+            }
+
+            $assignmentId = trim((string) ($assoc['einteilung_id'] ?? ''));
+            if ($assignmentId === '') {
+                continue;
+            }
+
+            $records[$assignmentId] = normalizeAssignmentRecord($assoc);
+        }
     }
 
-    return $records;
+    $store = loadAssignmentStore($rootPath);
+    foreach ($store['assignments'] as $assignmentId => $record) {
+        $records[$assignmentId] = array_merge($records[$assignmentId] ?? defaultAssignmentRecord($assignmentId), $record);
+    }
+
+    return array_values($records);
+}
+
+function normalizeAssignmentRecord(array $assoc): array
+{
+    $assignmentId = trim((string) ($assoc['einteilung_id'] ?? ''));
+    return [
+        'einteilung_id' => $assignmentId,
+        'training_id' => trim((string) ($assoc['training_id'] ?? '')),
+        'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
+        'rolle' => trim((string) ($assoc['rolle'] ?? '')),
+        'eingetragen_am' => trim((string) ($assoc['eingetragen_am'] ?? '')),
+        'ausgetragen_am' => trim((string) ($assoc['ausgetragen_am'] ?? '')),
+        'attendance' => trim((string) ($assoc['attendance'] ?? '')),
+        'checkin_am' => trim((string) ($assoc['checkin_am'] ?? '')),
+        'kommentar' => trim((string) ($assoc['kommentar'] ?? '')),
+        'training_datum' => trim((string) ($assoc['training_datum'] ?? '')),
+        'training_status' => trim((string) ($assoc['training_status'] ?? '')),
+        'training_dauer_stunden' => trim((string) ($assoc['training_dauer_stunden'] ?? '')),
+        'satz_eur' => trim((string) ($assoc['satz_eur'] ?? '')),
+        'betrag_eur' => trim((string) ($assoc['betrag_eur'] ?? '')),
+    ];
+}
+
+function defaultAssignmentRecord(string $assignmentId): array
+{
+    return [
+        'einteilung_id' => $assignmentId,
+        'training_id' => '',
+        'trainer_id' => '',
+        'rolle' => '',
+        'eingetragen_am' => '',
+        'ausgetragen_am' => '',
+        'attendance' => '',
+        'checkin_am' => '',
+        'kommentar' => '',
+        'training_datum' => '',
+        'training_status' => '',
+        'training_dauer_stunden' => '',
+        'satz_eur' => '',
+        'betrag_eur' => '',
+    ];
+}
+
+function loadAssignmentStore(string $rootPath): array
+{
+    $path = $rootPath . '/storage/einteilungen.json';
+    if (!is_file($path)) {
+        return ['assignments' => []];
+    }
+
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data)) {
+        return ['assignments' => []];
+    }
+
+    $assignments = isset($data['assignments']) && is_array($data['assignments']) ? $data['assignments'] : [];
+    return ['assignments' => $assignments];
+}
+
+function saveAssignmentStore(string $rootPath, array $store): void
+{
+    $path = $rootPath . '/storage/einteilungen.json';
+    $payload = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    file_put_contents($path, $payload === false ? '{}' : $payload);
+}
+
+function generateAssignmentId(string $rootPath): string
+{
+    $year = (int) date('Y');
+    $existingIds = collectExistingAssignmentIds($rootPath);
+    $yearCounters = [];
+
+    return nextAssignmentId($year, $existingIds, $yearCounters);
+}
+
+function collectExistingAssignmentIds(string $rootPath): array
+{
+    $ids = [];
+    $records = loadAssignmentRecords($rootPath);
+    foreach ($records as $record) {
+        $assignmentId = trim((string) ($record['einteilung_id'] ?? ''));
+        if ($assignmentId !== '') {
+            $ids[$assignmentId] = true;
+        }
+    }
+
+    $store = loadAssignmentStore($rootPath);
+    foreach ($store['assignments'] as $assignmentId => $_record) {
+        if ($assignmentId !== '') {
+            $ids[$assignmentId] = true;
+        }
+    }
+
+    return $ids;
+}
+
+function nextAssignmentId(int $year, array &$existingIds, array &$yearCounters): string
+{
+    if (!isset($yearCounters[$year])) {
+        $max = 0;
+        foreach ($existingIds as $assignmentId => $_value) {
+            if (preg_match('/^EIN-(\\d{4})-(\\d{3})$/', $assignmentId, $matches)) {
+                if ((int) $matches[1] === $year) {
+                    $max = max($max, (int) $matches[2]);
+                }
+            }
+        }
+        $yearCounters[$year] = $max + 1;
+    }
+
+    do {
+        $candidate = sprintf('EIN-%d-%03d', $year, $yearCounters[$year]);
+        $yearCounters[$year]++;
+    } while (isset($existingIds[$candidate]));
+
+    $existingIds[$candidate] = true;
+    return $candidate;
 }
 
 function loadAbmeldungRecords(string $rootPath): array
@@ -1468,6 +1972,35 @@ function verifyPin(string $inputPin, string $storedPin): bool
     return hash_equals($storedPin, $inputPin);
 }
 
+function loadRoleRates(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/ROLLEN_SAETZE.html');
+    if (!$rows) {
+        return [];
+    }
+
+    [$header, $dataRows] = $rows;
+    $header = normalizeHeaderCells($header);
+
+    $rates = [];
+    foreach ($dataRows as $row) {
+        $row = normalizeRowCells($header, $row);
+        $assoc = array_combine($header, $row);
+        if (!$assoc) {
+            continue;
+        }
+
+        $role = trim((string) ($assoc['rolle'] ?? ''));
+        if ($role === '') {
+            continue;
+        }
+        $rate = trim((string) ($assoc['stundensatz_eur'] ?? ''));
+        $rates[$role] = $rate;
+    }
+
+    return $rates;
+}
+
 function loadTrainerRecords(string $rootPath): array
 {
     $rows = loadHtmlRows($rootPath . '/database/TRAINER.html');
@@ -1476,11 +2009,11 @@ function loadTrainerRecords(string $rootPath): array
     }
 
     [$header, $dataRows] = $rows;
-    $normalizedHeader = array_map(static fn (string $cell): string => strtolower(trim($cell)), $header);
+    $normalizedHeader = normalizeHeaderCells($header);
 
     $records = [];
     foreach ($dataRows as $row) {
-        $row = array_pad($row, count($normalizedHeader), '');
+        $row = normalizeRowCells($normalizedHeader, $row);
         $assoc = array_combine($normalizedHeader, $row);
         if (!$assoc) {
             continue;
@@ -1497,6 +2030,8 @@ function loadTrainerRecords(string $rootPath): array
             'aktiv' => parseBoolean($assoc['aktiv'] ?? ''),
             'pin' => trim((string) ($assoc['pin'] ?? '')),
             'is_admin' => parseBoolean($assoc['is_admin'] ?? ''),
+            'rolle_standard' => trim((string) ($assoc['rolle_standard'] ?? '')),
+            'stundensatz_eur' => trim((string) ($assoc['stundensatz_eur'] ?? '')),
         ];
     }
 
