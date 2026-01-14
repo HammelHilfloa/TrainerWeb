@@ -821,9 +821,15 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
         }
     }
 
+    $activeAbmeldungen = collectActiveAbmeldungen($rootPath);
+    $abmeldungKey = buildAbmeldungKey($trainingId, $trainerId);
+    $activeAbmeldung = $abmeldungKey !== '' ? ($activeAbmeldungen[$abmeldungKey] ?? null) : null;
+    $assignmentAbgemeldetAm = $assignment !== null ? trim((string) ($assignment['abgemeldet_am'] ?? '')) : '';
+    $isAbgemeldet = $activeAbmeldung !== null || $assignmentAbgemeldetAm !== '';
+
     $monthStatus = resolveTrainingMonthStatus($rootPath, (string) ($training['datum'] ?? ''));
     $isMonthLocked = isTrainingMonthLocked($monthStatus);
-    $isEditable = $assignment !== null && !$isMonthLocked;
+    $isEditable = $assignment !== null && !$isMonthLocked && !$isAbgemeldet;
     $disabledAttr = $isEditable ? '' : ' disabled';
 
     $details = '<div class="detail-list">'
@@ -900,6 +906,32 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
         $assignmentForm = '<p class="helper">Für dieses Training bist du nicht eingeteilt. Änderungen sind nicht möglich.</p>';
     }
 
+    $abmeldungHtml = '';
+    if ($assignment !== null) {
+        if ($isAbgemeldet) {
+            $abmeldungGrund = trim((string) ($activeAbmeldung['grund'] ?? ''));
+            $abmeldungZeit = trim((string) ($activeAbmeldung['abgemeldet_am'] ?? ''));
+            $abmeldungInfo = 'Du hast dich bereits abgemeldet.';
+            if ($abmeldungZeit !== '') {
+                $abmeldungInfo .= ' (' . htmlspecialchars($abmeldungZeit) . ')';
+            }
+            $abmeldungHtml = '<div class="card">'
+                . '<strong>' . $abmeldungInfo . '</strong>'
+                . ($abmeldungGrund !== '' ? '<p class="helper">Grund: ' . htmlspecialchars($abmeldungGrund) . '</p>' : '')
+                . '</div>';
+        } elseif ($isMonthLocked) {
+            $abmeldungHtml = '<p class="helper">Abmeldungen sind in gesperrten Monaten nicht möglich.</p>';
+        } else {
+            $abmeldungHtml = '<form class="form-grid" method="post" action="/training?training_id=' . rawurlencode($trainingId) . '" onsubmit="return confirm(\'Abmeldung wirklich absenden?\')">'
+                . '<input type="hidden" name="action" value="cancel_training_assignment">'
+                . '<input type="hidden" name="training_id" value="' . htmlspecialchars($trainingId) . '">'
+                . '<input type="hidden" name="einteilung_id" value="' . htmlspecialchars($assignment['einteilung_id']) . '">'
+                . '<div><label for="abmeldung_grund">Abmeldung – Grund</label><textarea id="abmeldung_grund" name="abmeldung_grund" required></textarea></div>'
+                . '<button class="danger" type="submit">Abmelden</button>'
+                . '</form>';
+        }
+    }
+
     $headerHtml = '<div class="detail-header">'
         . '<div><div class="detail-title">' . htmlspecialchars($timeLabel) . '</div>'
         . '<div class="detail-subtitle">' . htmlspecialchars($groupLabel) . '</div></div>'
@@ -916,13 +948,14 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
         . $noteHtml
         . $monthLockHtml
         . $assignmentForm
+        . $abmeldungHtml
         . '</section>';
 }
 
 function handleTrainingDetailPost(string $rootPath): array
 {
     $action = trim((string) ($_POST['action'] ?? ''));
-    if ($action !== 'update_training_detail') {
+    if (!in_array($action, ['update_training_detail', 'cancel_training_assignment'], true)) {
         return ['Aktion nicht unterstützt.', 'error'];
     }
 
@@ -953,6 +986,43 @@ function handleTrainingDetailPost(string $rootPath): array
     $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
     if (!isAdmin() && ($trainerId === '' || $assignment['trainer_id'] !== $trainerId)) {
         return ['Keine Berechtigung für diese Einteilung.', 'error'];
+    }
+
+    $abmeldungKey = buildAbmeldungKey($trainingId, $assignment['trainer_id']);
+    $activeAbmeldungen = collectActiveAbmeldungen($rootPath);
+    $alreadyAbgemeldet = $assignment['abgemeldet_am'] !== '' || ($abmeldungKey !== '' && isset($activeAbmeldungen[$abmeldungKey]));
+
+    if ($action === 'cancel_training_assignment') {
+        $grund = trim((string) ($_POST['abmeldung_grund'] ?? ''));
+        if ($grund === '') {
+            return ['Bitte einen Grund für die Abmeldung angeben.', 'error'];
+        }
+
+        if ($alreadyAbgemeldet) {
+            return ['Du bist bereits abgemeldet.', 'error'];
+        }
+
+        $timestamp = date('c');
+        $abmeldungStore = loadAbmeldungStore($rootPath);
+        $abmeldungStore['abmeldungen'][] = [
+            'training_id' => $trainingId,
+            'trainer_id' => $assignment['trainer_id'],
+            'grund' => $grund,
+            'abgemeldet_am' => $timestamp,
+            'deleted_at' => '',
+        ];
+        saveAbmeldungStore($rootPath, $abmeldungStore);
+
+        $assignment['abgemeldet_am'] = $timestamp;
+        $assignmentStore = loadAssignmentStore($rootPath);
+        $assignmentStore['assignments'][$assignmentId] = $assignment;
+        saveAssignmentStore($rootPath, $assignmentStore);
+
+        return ['Abmeldung gespeichert.', 'success'];
+    }
+
+    if ($alreadyAbgemeldet) {
+        return ['Abgemeldete Einteilungen können nicht mehr bearbeitet werden.', 'error'];
     }
 
     $attendance = isset($_POST['attendance']) ? 'JA' : 'NEIN';
@@ -1106,6 +1176,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $statusOptions = collectTrainingStatuses($trainings);
     $assignments = loadTrainingAssignments($rootPath);
     $assignmentRecords = loadAssignmentRecords($rootPath);
+    $activeAbmeldungen = collectActiveAbmeldungen($rootPath);
     $trainers = loadTrainerRecords($rootPath);
     $roleRates = loadRoleRates($rootPath);
 
@@ -1279,6 +1350,10 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
                 continue;
             }
             if ($assignment['ausgetragen_am'] !== '') {
+                continue;
+            }
+            $abmeldungKey = buildAbmeldungKey($assignment['training_id'], $assignment['trainer_id']);
+            if ($abmeldungKey !== '' && isset($activeAbmeldungen[$abmeldungKey])) {
                 continue;
             }
             $assignmentsForTraining[] = $assignment;
@@ -2029,10 +2104,18 @@ function loadTrainingAssignments(string $rootPath): array
         return [];
     }
 
+    $activeAbmeldungen = collectActiveAbmeldungen($rootPath);
+
     $assignments = [];
     foreach ($records as $assignment) {
         if ($assignment['training_id'] === '' || $assignment['ausgetragen_am'] !== '') {
             continue;
+        }
+        if ($assignment['trainer_id'] !== '') {
+            $abmeldungKey = buildAbmeldungKey($assignment['training_id'], $assignment['trainer_id']);
+            if ($abmeldungKey !== '' && isset($activeAbmeldungen[$abmeldungKey])) {
+                continue;
+            }
         }
         $assignments[$assignment['training_id']] = true;
     }
@@ -2047,17 +2130,7 @@ function collectActiveAssignmentCounts(string $rootPath): array
         return [];
     }
 
-    $abmeldungen = loadAbmeldungRecords($rootPath);
-    $activeAbmeldungen = [];
-    foreach ($abmeldungen as $abmeldung) {
-        if ($abmeldung['deleted_at'] !== '') {
-            continue;
-        }
-        if ($abmeldung['training_id'] === '' || $abmeldung['trainer_id'] === '') {
-            continue;
-        }
-        $activeAbmeldungen[$abmeldung['training_id'] . '|' . $abmeldung['trainer_id']] = true;
-    }
+    $activeAbmeldungen = collectActiveAbmeldungen($rootPath);
 
     $counts = [];
     foreach ($assignments as $assignment) {
@@ -2067,8 +2140,8 @@ function collectActiveAssignmentCounts(string $rootPath): array
         if ($assignment['ausgetragen_am'] !== '') {
             continue;
         }
-        $abmeldungKey = $assignment['training_id'] . '|' . $assignment['trainer_id'];
-        if (isset($activeAbmeldungen[$abmeldungKey])) {
+        $abmeldungKey = buildAbmeldungKey($assignment['training_id'], $assignment['trainer_id']);
+        if ($abmeldungKey !== '' && isset($activeAbmeldungen[$abmeldungKey])) {
             continue;
         }
         if (!isset($counts[$assignment['training_id']])) {
@@ -2127,6 +2200,7 @@ function normalizeAssignmentRecord(array $assoc): array
         'kommentar' => trim((string) ($assoc['kommentar'] ?? '')),
         'einsatz_start' => trim((string) ($assoc['einsatz_start'] ?? '')),
         'einsatz_ende' => trim((string) ($assoc['einsatz_ende'] ?? '')),
+        'abgemeldet_am' => trim((string) ($assoc['abgemeldet_am'] ?? '')),
         'training_datum' => trim((string) ($assoc['training_datum'] ?? '')),
         'training_status' => trim((string) ($assoc['training_status'] ?? '')),
         'training_dauer_stunden' => trim((string) ($assoc['training_dauer_stunden'] ?? '')),
@@ -2149,6 +2223,7 @@ function defaultAssignmentRecord(string $assignmentId): array
         'kommentar' => '',
         'einsatz_start' => '',
         'einsatz_ende' => '',
+        'abgemeldet_am' => '',
         'training_datum' => '',
         'training_status' => '',
         'training_dauer_stunden' => '',
@@ -2236,29 +2311,103 @@ function nextAssignmentId(int $year, array &$existingIds, array &$yearCounters):
 function loadAbmeldungRecords(string $rootPath): array
 {
     $rows = loadHtmlRows($rootPath . '/database/ABMELDUNGEN.html');
-    if (!$rows) {
-        return [];
+    $records = [];
+    if ($rows) {
+        [$header, $dataRows] = $rows;
+        $header = normalizeHeaderCells($header);
+
+        foreach ($dataRows as $row) {
+            $row = normalizeRowCells($header, $row);
+            $assoc = array_combine($header, $row);
+            if (!$assoc) {
+                continue;
+            }
+
+            $records[] = [
+                'training_id' => trim((string) ($assoc['training_id'] ?? '')),
+                'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
+                'grund' => trim((string) ($assoc['grund'] ?? '')),
+                'abgemeldet_am' => trim((string) ($assoc['abgemeldet_am'] ?? '')),
+                'deleted_at' => trim((string) ($assoc['deleted_at'] ?? '')),
+            ];
+        }
     }
 
-    [$header, $dataRows] = $rows;
-    $header = normalizeHeaderCells($header);
-
-    $records = [];
-    foreach ($dataRows as $row) {
-        $row = normalizeRowCells($header, $row);
-        $assoc = array_combine($header, $row);
-        if (!$assoc) {
-            continue;
-        }
-
-        $records[] = [
-            'training_id' => trim((string) ($assoc['training_id'] ?? '')),
-            'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
-            'deleted_at' => trim((string) ($assoc['deleted_at'] ?? '')),
-        ];
+    $store = loadAbmeldungStore($rootPath);
+    foreach ($store['abmeldungen'] as $record) {
+        $records[] = normalizeAbmeldungRecord($record);
     }
 
     return $records;
+}
+
+function normalizeAbmeldungRecord(array $record): array
+{
+    return [
+        'training_id' => trim((string) ($record['training_id'] ?? '')),
+        'trainer_id' => trim((string) ($record['trainer_id'] ?? '')),
+        'grund' => trim((string) ($record['grund'] ?? '')),
+        'abgemeldet_am' => trim((string) ($record['abgemeldet_am'] ?? '')),
+        'deleted_at' => trim((string) ($record['deleted_at'] ?? '')),
+    ];
+}
+
+function loadAbmeldungStore(string $rootPath): array
+{
+    $path = $rootPath . '/storage/abmeldungen.json';
+    if (!is_file($path)) {
+        return ['abmeldungen' => []];
+    }
+
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data)) {
+        return ['abmeldungen' => []];
+    }
+
+    $abmeldungen = isset($data['abmeldungen']) && is_array($data['abmeldungen']) ? $data['abmeldungen'] : [];
+    return ['abmeldungen' => $abmeldungen];
+}
+
+function saveAbmeldungStore(string $rootPath, array $store): void
+{
+    $path = $rootPath . '/storage/abmeldungen.json';
+    $payload = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    file_put_contents($path, $payload === false ? '{}' : $payload);
+}
+
+function buildAbmeldungKey(string $trainingId, string $trainerId): string
+{
+    $trainingId = trim($trainingId);
+    $trainerId = trim($trainerId);
+    if ($trainingId === '' || $trainerId === '') {
+        return '';
+    }
+    return $trainingId . '|' . $trainerId;
+}
+
+function collectActiveAbmeldungen(string $rootPath): array
+{
+    $records = loadAbmeldungRecords($rootPath);
+    $active = [];
+    foreach ($records as $record) {
+        if ($record['deleted_at'] !== '') {
+            continue;
+        }
+        $key = buildAbmeldungKey($record['training_id'], $record['trainer_id']);
+        if ($key === '') {
+            continue;
+        }
+        if (!isset($active[$key])) {
+            $active[$key] = $record;
+            continue;
+        }
+        $currentTimestamp = $active[$key]['abgemeldet_am'] ?? '';
+        $candidateTimestamp = $record['abgemeldet_am'] ?? '';
+        if ($candidateTimestamp !== '' && $candidateTimestamp >= $currentTimestamp) {
+            $active[$key] = $record;
+        }
+    }
+    return $active;
 }
 
 function loadTrainingStore(string $rootPath): array
