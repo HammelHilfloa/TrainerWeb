@@ -436,6 +436,40 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             color: #4b5563;
             line-height: 1.5;
         }
+        .plan-card {
+            margin-top: 1rem;
+        }
+        .plan-title {
+            margin: 0;
+            font-weight: 700;
+            font-size: 1.05rem;
+        }
+        .plan-meta {
+            margin-top: 0.35rem;
+            color: #6b7280;
+            font-size: 0.85rem;
+        }
+        .plan-content {
+            margin-top: 0.6rem;
+            line-height: 1.6;
+            color: #1f2937;
+        }
+        .plan-content p {
+            margin: 0 0 0.75rem;
+        }
+        .plan-list {
+            margin: 0.5rem 0 0.75rem 1.2rem;
+            padding: 0;
+        }
+        .plan-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            margin-top: 0.6rem;
+            text-decoration: none;
+            color: var(--brand-color);
+            font-weight: 600;
+        }
         .detail-header {
             display: flex;
             flex-wrap: wrap;
@@ -800,6 +834,8 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
     $statusBadge = renderEinsatzStatusBadge((string) ($training['status'] ?? ''));
     $note = trim((string) ($training['bemerkung'] ?? ''));
     $cancelReason = trim((string) ($training['ausfall_grund'] ?? ''));
+    $trainingPlans = loadTrainingPlanRecords($rootPath);
+    $trainingPlan = $trainingPlans[$trainingId] ?? null;
 
     $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
     $trainer = $trainerId !== '' ? findTrainerById(loadTrainerRecords($rootPath), $trainerId) : null;
@@ -939,6 +975,27 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
         . $statusBadge
         . '</div>';
 
+    $planHtml = '';
+    if ($trainingPlan !== null) {
+        $planTitle = trim((string) ($trainingPlan['titel'] ?? ''));
+        $planContent = trim((string) ($trainingPlan['inhalt'] ?? ''));
+        $planLink = trim((string) ($trainingPlan['link'] ?? ''));
+        $planUpdated = trim((string) ($trainingPlan['updated_at'] ?? ''));
+        $planMeta = $planUpdated !== '' ? '<div class="plan-meta">Zuletzt aktualisiert: ' . htmlspecialchars($planUpdated) . '</div>' : '';
+
+        if ($planTitle !== '' || $planContent !== '' || $planLink !== '') {
+            $planContentHtml = $planContent !== '' ? renderTrainingPlanContent($planContent) : '<p class="helper">Kein Inhalt hinterlegt.</p>';
+            $planTitleHtml = $planTitle !== '' ? '<h2 class="plan-title">' . htmlspecialchars($planTitle) . '</h2>' : '<h2 class="plan-title">Trainingsplan</h2>';
+            $planLinkHtml = $planLink !== '' ? '<a class="plan-link" href="' . htmlspecialchars($planLink) . '" target="_blank" rel="noopener">Material/Link öffnen →</a>' : '';
+            $planHtml = '<section class="card plan-card">'
+                . $planTitleHtml
+                . $planMeta
+                . '<div class="plan-content">' . $planContentHtml . '</div>'
+                . $planLinkHtml
+                . '</section>';
+        }
+    }
+
     return '<section class="card">'
         . '<a class="button-link secondary" href="/einsaetze">Zurück zu Einsätzen</a>'
         . $flashHtml
@@ -949,7 +1006,126 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
         . $monthLockHtml
         . $assignmentForm
         . $abmeldungHtml
-        . '</section>';
+        . '</section>'
+        . $planHtml;
+}
+
+function renderTrainingPlanContent(string $content): string
+{
+    $normalized = normalizeTrainingPlanContent($content);
+    if ($normalized === '') {
+        return '<p class="helper">Kein Inhalt hinterlegt.</p>';
+    }
+
+    if (looksLikeJson($normalized)) {
+        $decoded = json_decode($normalized, true);
+        if (is_array($decoded)) {
+            return renderTrainingPlanJson($decoded);
+        }
+    }
+
+    $paragraphs = preg_split("/\\n\\s*\\n/", $normalized) ?: [];
+    $html = '';
+    foreach ($paragraphs as $paragraph) {
+        $paragraph = trim($paragraph);
+        if ($paragraph === '') {
+            continue;
+        }
+        $lines = array_values(array_filter(array_map('trim', explode("\n", $paragraph)), static fn (string $line): bool => $line !== ''));
+        $safeLines = array_map(static fn (string $line): string => htmlspecialchars($line), $lines);
+        $html .= '<p>' . implode('<br>', $safeLines) . '</p>';
+    }
+
+    return $html !== '' ? $html : '<p class="helper">Kein Inhalt hinterlegt.</p>';
+}
+
+function normalizeTrainingPlanContent(string $content): string
+{
+    $normalized = preg_replace('/<br\\s*\\/?>/i', "\n", $content);
+    $normalized = str_replace(["\r\n", "\r"], "\n", $normalized ?? '');
+    return trim($normalized);
+}
+
+function looksLikeJson(string $value): bool
+{
+    $trimmed = ltrim($value);
+    return $trimmed !== '' && ($trimmed[0] === '{' || $trimmed[0] === '[');
+}
+
+function renderTrainingPlanJson(array $data): string
+{
+    if (isset($data['sections']) && is_array($data['sections'])) {
+        return renderTrainingPlanSections($data['sections']);
+    }
+
+    if (array_is_list($data)) {
+        $allStrings = true;
+        foreach ($data as $item) {
+            if (!is_string($item)) {
+                $allStrings = false;
+                break;
+            }
+        }
+        if ($allStrings) {
+            return renderTrainingPlanList($data);
+        }
+
+        $html = '';
+        foreach ($data as $item) {
+            if (is_array($item)) {
+                $html .= renderTrainingPlanJson($item);
+            } elseif (is_string($item)) {
+                $html .= '<p>' . htmlspecialchars($item) . '</p>';
+            }
+        }
+        return $html !== '' ? $html : '<p class="helper">Kein Inhalt hinterlegt.</p>';
+    }
+
+    $items = [];
+    foreach ($data as $key => $value) {
+        $label = htmlspecialchars((string) $key);
+        if (is_array($value)) {
+            $value = json_encode($value, JSON_UNESCAPED_UNICODE) ?: '';
+        }
+        $items[] = '<li><strong>' . $label . ':</strong> ' . htmlspecialchars((string) $value) . '</li>';
+    }
+    return $items !== [] ? '<ul class="plan-list">' . implode('', $items) . '</ul>' : '<p class="helper">Kein Inhalt hinterlegt.</p>';
+}
+
+function renderTrainingPlanSections(array $sections): string
+{
+    $html = '';
+    foreach ($sections as $section) {
+        if (!is_array($section)) {
+            continue;
+        }
+        $title = trim((string) ($section['title'] ?? $section['titel'] ?? ''));
+        if ($title !== '') {
+            $html .= '<p><strong>' . htmlspecialchars($title) . '</strong></p>';
+        }
+        $items = $section['items'] ?? $section['punkte'] ?? null;
+        if (is_array($items)) {
+            $html .= renderTrainingPlanList($items);
+        } elseif (is_string($items) && trim($items) !== '') {
+            $html .= '<p>' . htmlspecialchars($items) . '</p>';
+        }
+    }
+    return $html !== '' ? $html : '<p class="helper">Kein Inhalt hinterlegt.</p>';
+}
+
+function renderTrainingPlanList(array $items): string
+{
+    $listItems = [];
+    foreach ($items as $item) {
+        if ($item === null || $item === '') {
+            continue;
+        }
+        if (is_array($item)) {
+            $item = json_encode($item, JSON_UNESCAPED_UNICODE) ?: '';
+        }
+        $listItems[] = '<li>' . htmlspecialchars((string) $item) . '</li>';
+    }
+    return $listItems !== [] ? '<ul class="plan-list">' . implode('', $listItems) . '</ul>' : '';
 }
 
 function handleTrainingDetailPost(string $rootPath): array
@@ -1179,6 +1355,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $activeAbmeldungen = collectActiveAbmeldungen($rootPath);
     $trainers = loadTrainerRecords($rootPath);
     $roleRates = loadRoleRates($rootPath);
+    $trainingPlans = loadTrainingPlanRecords($rootPath);
 
     $filterStart = trim((string) ($_GET['filter_start'] ?? ''));
     $filterEnd = trim((string) ($_GET['filter_end'] ?? ''));
@@ -1187,6 +1364,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $editId = trim((string) ($_GET['edit'] ?? ''));
     $assignTrainingId = trim((string) ($_GET['assign_training_id'] ?? ''));
     $trainerSearch = trim((string) ($_GET['trainer_search'] ?? ''));
+    $planTrainingId = trim((string) ($_GET['plan_training_id'] ?? ''));
 
     $filteredTrainings = array_values(array_filter($trainings, static function (array $training) use ($filterStart, $filterEnd, $filterGroup, $filterStatus): bool {
         if ($filterGroup !== '' && $training['gruppe'] !== $filterGroup) {
@@ -1323,6 +1501,27 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     }
     $assignTraining = $assignTrainingId !== '' ? findTrainingById($trainings, $assignTrainingId) : null;
 
+    if ($planTrainingId === '' && $sortedTrainings !== []) {
+        $planTrainingId = $sortedTrainings[0]['training_id'];
+    }
+    $activePlan = $planTrainingId !== '' ? ($trainingPlans[$planTrainingId] ?? null) : null;
+    $planTitleValue = htmlspecialchars((string) ($activePlan['titel'] ?? ''));
+    $planContentValue = htmlspecialchars((string) ($activePlan['inhalt'] ?? ''));
+    $planLinkValue = htmlspecialchars((string) ($activePlan['link'] ?? ''));
+    $planUpdatedAt = trim((string) ($activePlan['updated_at'] ?? ''));
+    $planUpdatedBy = trim((string) ($activePlan['updated_by'] ?? ''));
+    $planMetaHtml = '';
+    if ($planUpdatedAt !== '' || $planUpdatedBy !== '') {
+        $metaParts = [];
+        if ($planUpdatedAt !== '') {
+            $metaParts[] = 'Zuletzt: ' . htmlspecialchars($planUpdatedAt);
+        }
+        if ($planUpdatedBy !== '') {
+            $metaParts[] = 'Trainer:in ' . htmlspecialchars($planUpdatedBy);
+        }
+        $planMetaHtml = '<p class="helper">' . implode(' · ', $metaParts) . '</p>';
+    }
+
     $roleNames = array_keys($roleRates);
     if ($roleNames === []) {
         $roleNames = array_values(array_unique(array_filter(array_map(static fn (array $trainer): string => $trainer['rolle_standard'] ?? '', $trainers))));
@@ -1335,6 +1534,14 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         $selected = $trainingId === $assignTrainingId ? ' selected' : '';
         $label = buildTrainingLabel($training);
         $trainingSelectOptions .= '<option value="' . htmlspecialchars($trainingId) . '"' . $selected . '>' . $label . '</option>';
+    }
+
+    $planTrainingOptions = '<option value="">Training auswählen</option>';
+    foreach ($sortedTrainings as $training) {
+        $trainingId = $training['training_id'];
+        $selected = $trainingId === $planTrainingId ? ' selected' : '';
+        $label = buildTrainingLabel($training);
+        $planTrainingOptions .= '<option value="' . htmlspecialchars($trainingId) . '"' . $selected . '>' . $label . '</option>';
     }
 
     $trainerById = [];
@@ -1494,6 +1701,30 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<div class="trainer-list">' . $trainerListHtml . '</div>'
         . '</section>';
 
+    $planQuery = buildAdminQuery(['plan_training_id' => $planTrainingId]);
+    $planSection = '<section class="card">'
+        . '<div class="section-title"><h2>Trainingsplan verwalten</h2><span class="badge">Inhalte</span></div>'
+        . '<p class="helper">Pro Training kann ein Trainingsplan mit Titel, Inhalt und optionalem Link gepflegt werden.</p>'
+        . '<form class="form-grid cols-2" method="get" action="/admin">'
+        . '<div><label for="plan_training_id">Training</label><select id="plan_training_id" name="plan_training_id">' . $planTrainingOptions . '</select></div>'
+        . '<div class="admin-actions">'
+        . '<button class="secondary" type="submit">Training laden</button>'
+        . '<a class="button-link secondary" href="/admin">Zurücksetzen</a>'
+        . '</div>'
+        . '</form>'
+        . $planMetaHtml
+        . '<form class="form-grid" method="post" action="/admin' . $planQuery . '">'
+        . '<input type="hidden" name="action" value="save_training_plan">'
+        . '<input type="hidden" name="training_id" value="' . htmlspecialchars($planTrainingId) . '">'
+        . '<div><label for="plan_titel">Titel</label><input id="plan_titel" name="titel" placeholder="z.B. Technikschwerpunkt" value="' . $planTitleValue . '"></div>'
+        . '<div><label for="plan_link">Link (optional)</label><input id="plan_link" name="link" type="url" placeholder="https://..." value="' . $planLinkValue . '"></div>'
+        . '<div><label for="plan_inhalt">Inhalt</label><textarea id="plan_inhalt" name="inhalt" placeholder="Inhalte, Material oder Abläufe – am besten mit Zeilenumbrüchen.">'
+        . $planContentValue
+        . '</textarea><div class="form-note">Tipp: Absätze werden automatisch in gut lesbare Blöcke umgewandelt.</div></div>'
+        . '<button class="primary" type="submit"' . ($planTrainingId === '' ? ' disabled' : '') . '>Trainingsplan speichern</button>'
+        . '</form>'
+        . '</section>';
+
     return '<section class="card">'
         . '<h1>Admin</h1>'
         . '<p class="helper">Nur Administrator:innen können diese Seite sehen. Mandant: ' . $brandName . '.</p>'
@@ -1518,6 +1749,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<h2>Liste</h2>'
         . '<div class="admin-list">' . $trainingsHtml . '</div>'
         . '</section>'
+        . $planSection
         . $assignSection
         . $editSection
         . $createSection
@@ -1529,6 +1761,64 @@ function handleTrainingAdminPost(string $rootPath): array
     $action = trim((string) ($_POST['action'] ?? ''));
     $store = loadTrainingStore($rootPath);
     $assignments = loadTrainingAssignments($rootPath);
+
+    if ($action === 'save_training_plan') {
+        $trainingId = trim((string) ($_POST['training_id'] ?? ''));
+        if ($trainingId === '') {
+            return ['Bitte ein Training auswählen.', 'error', []];
+        }
+
+        $training = findTrainingById(loadTrainingRecords($rootPath), $trainingId);
+        if (!$training) {
+            return ['Training nicht gefunden.', 'error', []];
+        }
+
+        $titel = trim((string) ($_POST['titel'] ?? ''));
+        $inhalt = trim((string) ($_POST['inhalt'] ?? ''));
+        $link = trim((string) ($_POST['link'] ?? ''));
+
+        if ($titel === '' && $inhalt === '' && $link === '') {
+            return ['Bitte Titel, Inhalt oder Link ausfüllen.', 'error', []];
+        }
+
+        $existingPlans = loadTrainingPlanRecords($rootPath);
+        $existing = $existingPlans[$trainingId] ?? null;
+        $existingIds = collectExistingTrainingPlanIds($rootPath);
+        $planId = trim((string) ($existing['plan_id'] ?? ''));
+        if ($planId === '') {
+            $planId = generateTrainingPlanId($existingIds);
+        }
+
+        $now = date('d.m.Y');
+        $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
+        $createdAt = trim((string) ($existing['created_at'] ?? ''));
+        $createdBy = trim((string) ($existing['created_by'] ?? ''));
+        if ($createdAt === '') {
+            $createdAt = $now;
+        }
+        if ($createdBy === '') {
+            $createdBy = $trainerId;
+        }
+
+        $planRecord = [
+            'plan_id' => $planId,
+            'training_id' => $trainingId,
+            'titel' => $titel,
+            'inhalt' => $inhalt,
+            'link' => $link,
+            'created_at' => $createdAt,
+            'created_by' => $createdBy,
+            'updated_at' => $now,
+            'updated_by' => $trainerId,
+            'deleted_at' => '',
+        ];
+
+        $planStore = loadTrainingPlanStore($rootPath);
+        $planStore['plans'][$trainingId] = $planRecord;
+        saveTrainingPlanStore($rootPath, $planStore);
+
+        return ['Trainingsplan gespeichert.', 'success', []];
+    }
 
     if ($action === 'assign_trainer') {
         $trainingId = trim((string) ($_POST['training_id'] ?? ''));
@@ -1908,6 +2198,140 @@ function weekdayNameToIsoNumber(string $weekday): ?int
     ];
     $normalized = strtolower(trim($weekday));
     return $map[$normalized] ?? null;
+}
+
+function loadTrainingPlanRecords(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/TRAININGSPLAN.html');
+    $records = [];
+
+    if ($rows) {
+        [$header, $dataRows] = $rows;
+        $header = normalizeHeaderCells($header);
+
+        foreach ($dataRows as $row) {
+            $row = normalizeRowCells($header, $row);
+            $assoc = array_combine($header, $row);
+            if (!$assoc) {
+                continue;
+            }
+
+            $trainingId = trim((string) ($assoc['training_id'] ?? ''));
+            if ($trainingId === '') {
+                continue;
+            }
+
+            $record = [
+                'plan_id' => trim((string) ($assoc['plan_id'] ?? '')),
+                'training_id' => $trainingId,
+                'titel' => trim((string) ($assoc['titel'] ?? '')),
+                'inhalt' => trim((string) ($assoc['inhalt'] ?? '')),
+                'link' => trim((string) ($assoc['link'] ?? '')),
+                'created_at' => trim((string) ($assoc['created_at'] ?? '')),
+                'created_by' => trim((string) ($assoc['created_by'] ?? '')),
+                'updated_at' => trim((string) ($assoc['updated_at'] ?? '')),
+                'updated_by' => trim((string) ($assoc['updated_by'] ?? '')),
+                'deleted_at' => trim((string) ($assoc['deleted_at'] ?? '')),
+            ];
+
+            if ($record['deleted_at'] !== '') {
+                continue;
+            }
+
+            if (!isset($records[$trainingId]) || isTrainingPlanNewer($record, $records[$trainingId])) {
+                $records[$trainingId] = $record;
+            }
+        }
+    }
+
+    $store = loadTrainingPlanStore($rootPath);
+    foreach ($store['plans'] as $trainingId => $record) {
+        $trainingId = trim((string) $trainingId);
+        if ($trainingId === '') {
+            continue;
+        }
+        $records[$trainingId] = array_merge($records[$trainingId] ?? defaultTrainingPlanRecord($trainingId), $record);
+    }
+
+    return $records;
+}
+
+function isTrainingPlanNewer(array $candidate, array $current): bool
+{
+    $candidateStamp = parseDateToTimestamp($candidate['updated_at'] ?? '') ?? 0;
+    $currentStamp = parseDateToTimestamp($current['updated_at'] ?? '') ?? 0;
+    if ($candidateStamp === $currentStamp) {
+        return (string) ($candidate['plan_id'] ?? '') >= (string) ($current['plan_id'] ?? '');
+    }
+    return $candidateStamp > $currentStamp;
+}
+
+function defaultTrainingPlanRecord(string $trainingId): array
+{
+    return [
+        'plan_id' => '',
+        'training_id' => $trainingId,
+        'titel' => '',
+        'inhalt' => '',
+        'link' => '',
+        'created_at' => '',
+        'created_by' => '',
+        'updated_at' => '',
+        'updated_by' => '',
+        'deleted_at' => '',
+    ];
+}
+
+function loadTrainingPlanStore(string $rootPath): array
+{
+    $path = $rootPath . '/storage/trainingsplan.json';
+    if (!is_file($path)) {
+        return ['plans' => []];
+    }
+
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data)) {
+        return ['plans' => []];
+    }
+
+    $plans = isset($data['plans']) && is_array($data['plans']) ? $data['plans'] : [];
+    return ['plans' => $plans];
+}
+
+function saveTrainingPlanStore(string $rootPath, array $store): void
+{
+    $path = $rootPath . '/storage/trainingsplan.json';
+    $payload = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    file_put_contents($path, $payload === false ? '{}' : $payload);
+}
+
+function generateTrainingPlanId(array $existingIds): string
+{
+    do {
+        $candidate = 'P_' . bin2hex(random_bytes(4));
+    } while (isset($existingIds[$candidate]));
+
+    return $candidate;
+}
+
+function collectExistingTrainingPlanIds(string $rootPath): array
+{
+    $ids = [];
+    $plans = loadTrainingPlanRecords($rootPath);
+    foreach ($plans as $plan) {
+        $planId = trim((string) ($plan['plan_id'] ?? ''));
+        if ($planId !== '') {
+            $ids[$planId] = true;
+        }
+    }
+    $store = loadTrainingPlanStore($rootPath);
+    foreach ($store['plans'] as $plan) {
+        $planId = trim((string) ($plan['plan_id'] ?? ''));
+        if ($planId !== '') {
+            $ids[$planId] = true;
+        }
+    }
+    return $ids;
 }
 
 function loadTrainingRecords(string $rootPath): array
