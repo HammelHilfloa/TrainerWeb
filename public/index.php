@@ -1043,6 +1043,15 @@ function loadTrainingRecords(string $rootPath): array
         ], $record);
     }
 
+    $assignmentCounts = collectActiveAssignmentCounts($rootPath);
+    foreach ($merged as $id => $record) {
+        $needed = max(0, (int) ($record['benoetigt_trainer'] ?? 0));
+        $assigned = $assignmentCounts[$id] ?? 0;
+        $record['eingeteilt'] = $assigned;
+        $record['offen'] = max(0, $needed - $assigned);
+        $merged[$id] = $record;
+    }
+
     return array_values($merged);
 }
 
@@ -1125,6 +1134,102 @@ function loadTrainingAssignments(string $rootPath): array
     }
 
     return $assignments;
+}
+
+function collectActiveAssignmentCounts(string $rootPath): array
+{
+    $assignments = loadAssignmentRecords($rootPath);
+    if ($assignments === []) {
+        return [];
+    }
+
+    $abmeldungen = loadAbmeldungRecords($rootPath);
+    $activeAbmeldungen = [];
+    foreach ($abmeldungen as $abmeldung) {
+        if ($abmeldung['deleted_at'] !== '') {
+            continue;
+        }
+        if ($abmeldung['training_id'] === '' || $abmeldung['trainer_id'] === '') {
+            continue;
+        }
+        $activeAbmeldungen[$abmeldung['training_id'] . '|' . $abmeldung['trainer_id']] = true;
+    }
+
+    $counts = [];
+    foreach ($assignments as $assignment) {
+        if ($assignment['training_id'] === '' || $assignment['trainer_id'] === '') {
+            continue;
+        }
+        if ($assignment['ausgetragen_am'] !== '') {
+            continue;
+        }
+        $abmeldungKey = $assignment['training_id'] . '|' . $assignment['trainer_id'];
+        if (isset($activeAbmeldungen[$abmeldungKey])) {
+            continue;
+        }
+        if (!isset($counts[$assignment['training_id']])) {
+            $counts[$assignment['training_id']] = 0;
+        }
+        $counts[$assignment['training_id']]++;
+    }
+
+    return $counts;
+}
+
+function loadAssignmentRecords(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/EINTEILUNGEN.html');
+    if (!$rows) {
+        return [];
+    }
+
+    [$header, $dataRows] = $rows;
+    $header = normalizeHeaderCells($header);
+
+    $records = [];
+    foreach ($dataRows as $row) {
+        $row = normalizeRowCells($header, $row);
+        $assoc = array_combine($header, $row);
+        if (!$assoc) {
+            continue;
+        }
+
+        $records[] = [
+            'training_id' => trim((string) ($assoc['training_id'] ?? '')),
+            'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
+            'ausgetragen_am' => trim((string) ($assoc['ausgetragen_am'] ?? '')),
+        ];
+    }
+
+    return $records;
+}
+
+function loadAbmeldungRecords(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/ABMELDUNGEN.html');
+    if (!$rows) {
+        return [];
+    }
+
+    [$header, $dataRows] = $rows;
+    $header = normalizeHeaderCells($header);
+
+    $records = [];
+    foreach ($dataRows as $row) {
+        $row = normalizeRowCells($header, $row);
+        $assoc = array_combine($header, $row);
+        if (!$assoc) {
+            continue;
+        }
+
+        $records[] = [
+            'training_id' => trim((string) ($assoc['training_id'] ?? '')),
+            'trainer_id' => trim((string) ($assoc['trainer_id'] ?? '')),
+            'deleted_at' => trim((string) ($assoc['deleted_at'] ?? '')),
+        ];
+    }
+
+    return $records;
 }
 
 function loadTrainingStore(string $rootPath): array
