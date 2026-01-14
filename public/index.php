@@ -38,7 +38,7 @@ function resolveRoute(string $path, array $settings, string $rootPath): array
         '/einsaetze' => ['Einsätze', renderEinsaetze(), 'einsaetze', false, $statusCode],
         '/abrechnung' => ['Abrechnung', renderAbrechnung(), 'abrechnung', false, $statusCode],
         '/mehr' => ['Mehr', renderMehr(), 'mehr', true, $statusCode],
-        '/admin' => renderAdmin($settings),
+        '/admin' => renderAdmin($settings, $rootPath),
         '/' => ['Start', renderOverview(), 'uebersicht', true, $statusCode],
         default => renderNotFound(),
     };
@@ -93,14 +93,21 @@ function handleLogin(array $settings, string $rootPath): array
     return ['Login', $content, null, false, 200];
 }
 
-function renderAdmin(array $settings): array
+function renderAdmin(array $settings, string $rootPath): array
 {
     if (!isAdmin()) {
         $content = renderForbidden();
         return ['Admin', $content, null, false, 403];
     }
 
-    return ['Admin', renderAdminPage($settings), null, true, 200];
+    $message = null;
+    $messageType = 'success';
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        [$message, $messageType] = handleTrainingAdminPost($rootPath);
+    }
+
+    return ['Admin', renderAdminPage($settings, $rootPath, $message, $messageType), null, true, 200];
 }
 
 function renderNotFound(): array
@@ -347,7 +354,8 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             border-radius: 10px;
             border: 1px solid #d1d5db;
         }
-        button.primary {
+        button.primary,
+        .button-link.primary {
             background: var(--brand-color);
             color: #fff;
             border: none;
@@ -355,6 +363,104 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             padding: 0.7rem;
             font-weight: 600;
             cursor: pointer;
+        }
+        button.secondary,
+        .button-link.secondary {
+            background: #eef2f7;
+            color: #1f2937;
+            border: none;
+            border-radius: 10px;
+            padding: 0.65rem 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        button.danger,
+        .button-link.danger {
+            background: #b42318;
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            padding: 0.65rem 0.9rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .button-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-decoration: none;
+        }
+        button[disabled] {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        textarea {
+            width: 100%;
+            min-height: 90px;
+            border-radius: 10px;
+            border: 1px solid #d1d5db;
+            padding: 0.6rem 0.75rem;
+            resize: vertical;
+        }
+        .form-grid {
+            display: grid;
+            gap: 0.9rem;
+        }
+        .form-grid.cols-2 {
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        }
+        .admin-list {
+            display: grid;
+            gap: 1rem;
+        }
+        .admin-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 14px;
+            padding: 1rem;
+            display: grid;
+            gap: 0.6rem;
+            background: #fdfdfd;
+        }
+        .admin-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.45rem;
+            align-items: center;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.2rem 0.6rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background: #f3f4f6;
+            color: #374151;
+        }
+        .badge.success { background: #e7f7ef; color: #147d4b; }
+        .badge.warning { background: #fef3c7; color: #b45309; }
+        .badge.danger { background: #fee2e2; color: #b42318; }
+        .admin-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+        .flash {
+            border-radius: 12px;
+            padding: 0.8rem 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+        .flash.success { background: #e7f7ef; color: #0f6b3c; }
+        .flash.error { background: #fee2e2; color: #b42318; }
+        .section-title {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+        .section-title h2 {
+            margin: 0;
         }
         .error {
             color: #b42318;
@@ -430,22 +536,581 @@ function renderMehr(): string
         . '</section>';
 }
 
-function renderAdminPage(array $settings): string
+function renderAdminPage(array $settings, string $rootPath, ?string $message, string $messageType): string
 {
     $brandName = htmlspecialchars((string) $settings['brand_name']);
+    $trainings = loadTrainingRecords($rootPath);
+    $trainingGroups = collectTrainingGroups($trainings);
+    $statusOptions = collectTrainingStatuses($trainings);
+    $assignments = loadTrainingAssignments($rootPath);
+
+    $filterStart = trim((string) ($_GET['filter_start'] ?? ''));
+    $filterEnd = trim((string) ($_GET['filter_end'] ?? ''));
+    $filterGroup = trim((string) ($_GET['filter_group'] ?? ''));
+    $filterStatus = trim((string) ($_GET['filter_status'] ?? ''));
+    $editId = trim((string) ($_GET['edit'] ?? ''));
+
+    $filteredTrainings = array_values(array_filter($trainings, static function (array $training) use ($filterStart, $filterEnd, $filterGroup, $filterStatus): bool {
+        if ($filterGroup !== '' && $training['gruppe'] !== $filterGroup) {
+            return false;
+        }
+        if ($filterStatus !== '' && $training['status'] !== $filterStatus) {
+            return false;
+        }
+
+        $trainingDate = parseDateToTimestamp($training['datum']);
+        if ($trainingDate !== null) {
+            $startDate = $filterStart !== '' ? parseDateToTimestamp($filterStart) : null;
+            $endDate = $filterEnd !== '' ? parseDateToTimestamp($filterEnd) : null;
+
+            if ($startDate !== null && $trainingDate < $startDate) {
+                return false;
+            }
+            if ($endDate !== null && $trainingDate > $endDate) {
+                return false;
+            }
+        }
+
+        return true;
+    }));
+
+    usort($filteredTrainings, static function (array $a, array $b): int {
+        $dateA = parseDateToTimestamp($a['datum']) ?? 0;
+        $dateB = parseDateToTimestamp($b['datum']) ?? 0;
+        if ($dateA === $dateB) {
+            return strcmp($a['start'], $b['start']);
+        }
+        return $dateA <=> $dateB;
+    });
+
+    $flashHtml = '';
+    if ($message !== null && $message !== '') {
+        $flashHtml = '<div class="flash ' . htmlspecialchars($messageType) . '">' . htmlspecialchars($message) . '</div>';
+    }
+
+    $filterGroupOptions = '<option value="">Alle Gruppen</option>';
+    foreach ($trainingGroups as $group) {
+        $selected = $filterGroup === $group ? ' selected' : '';
+        $filterGroupOptions .= '<option value="' . htmlspecialchars($group) . '"' . $selected . '>' . htmlspecialchars($group) . '</option>';
+    }
+
+    $filterStatusOptions = '<option value="">Alle Status</option>';
+    foreach ($statusOptions as $status) {
+        $selected = $filterStatus === $status ? ' selected' : '';
+        $filterStatusOptions .= '<option value="' . htmlspecialchars($status) . '"' . $selected . '>' . htmlspecialchars($status) . '</option>';
+    }
+
+    $trainingsHtml = '';
+    foreach ($filteredTrainings as $training) {
+        $trainingId = $training['training_id'];
+        $statusBadge = trainingStatusBadge($training['status']);
+        $editLink = '/admin?edit=' . rawurlencode($trainingId);
+        $dateLabel = htmlspecialchars($training['datum']);
+        $timeLabel = htmlspecialchars(trim($training['start'] . '–' . $training['ende']));
+        $groupLabel = htmlspecialchars($training['gruppe']);
+        $ortLabel = htmlspecialchars($training['ort']);
+        $trainerCount = htmlspecialchars((string) $training['benoetigt_trainer']);
+        $note = $training['bemerkung'] !== '' ? '<p class="helper">' . htmlspecialchars($training['bemerkung']) . '</p>' : '';
+        $cancelReason = $training['ausfall_grund'] !== '' ? '<span class="badge danger">Ausfall: ' . htmlspecialchars($training['ausfall_grund']) . '</span>' : '';
+        $durationLabel = $training['dauer_stunden'] !== '' ? '<span class="badge">Dauer ' . htmlspecialchars($training['dauer_stunden']) . ' h</span>' : '';
+
+        $deleteDisabled = isset($assignments[$trainingId]);
+        $deleteHelper = $deleteDisabled ? '<span class="badge warning">Löschen gesperrt: Einteilungen vorhanden</span>' : '<span class="badge">Soft-Delete möglich</span>';
+        $deleteButton = $deleteDisabled
+            ? '<button class="danger" type="submit" disabled>Training löschen</button>'
+            : '<button class="danger" type="submit">Training löschen</button>';
+
+        $trainingsHtml .= '<article class="admin-item">'
+            . '<div class="admin-meta">'
+            . '<span class="badge">' . $dateLabel . '</span>'
+            . '<span class="badge">' . $timeLabel . '</span>'
+            . '<span class="badge">' . $groupLabel . '</span>'
+            . $statusBadge
+            . $durationLabel
+            . $cancelReason
+            . '</div>'
+            . '<p><strong>' . $groupLabel . '</strong> · ' . $ortLabel . '</p>'
+            . '<p class="helper">Benötigt: ' . $trainerCount . ' Trainer:innen</p>'
+            . $note
+            . $deleteHelper
+            . '<div class="admin-actions">'
+            . '<a class="button-link primary" href="' . $editLink . '">Bearbeiten</a>'
+            . '<form method="post" action="/admin" onsubmit="return confirm(\'Training wirklich löschen?\')">'
+            . '<input type="hidden" name="action" value="delete">'
+            . '<input type="hidden" name="training_id" value="' . htmlspecialchars($trainingId) . '">'
+            . $deleteButton
+            . '</form>'
+            . '</div>'
+            . '</article>';
+    }
+
+    if ($trainingsHtml === '') {
+        $trainingsHtml = '<p class="helper">Keine Trainings gefunden. Filter anpassen oder neue Einheit anlegen.</p>';
+    }
+
+    $editTraining = $editId !== '' ? findTrainingById($trainings, $editId) : null;
+    $editSection = '';
+    if ($editTraining) {
+        $editSection = renderTrainingForm('Training bearbeiten', 'update', $editTraining, $statusOptions);
+    }
+
+    $newTraining = [
+        'training_id' => '',
+        'datum' => '',
+        'start' => '',
+        'ende' => '',
+        'gruppe' => '',
+        'ort' => '',
+        'benoetigt_trainer' => '',
+        'status' => 'geplant',
+        'ausfall_grund' => '',
+        'bemerkung' => '',
+    ];
+    $createSection = renderTrainingForm('Neues Training anlegen', 'create', $newTraining, $statusOptions);
 
     return '<section class="card">'
         . '<h1>Admin</h1>'
         . '<p class="helper">Nur Administrator:innen können diese Seite sehen. Mandant: ' . $brandName . '.</p>'
-        . '<div class="tile-grid">'
-        . '<div class="tile"><span class="tile-meta">Planung</span><span class="tile-title">Training anlegen</span><p class="helper">Neue Einheiten hinzufügen.</p></div>'
-        . '<div class="tile"><span class="tile-meta">Planung</span><span class="tile-title">Trainer zuweisen</span><p class="helper">Trainer:innen den Einheiten zuordnen.</p></div>'
-        . '<div class="tile"><span class="tile-meta">Abrechnung</span><span class="tile-title">Monat freigeben / Monat sperren</span><p class="helper">Abrechnungsmonat steuern.</p></div>'
-        . '<div class="tile"><span class="tile-meta">Reporting</span><span class="tile-title">Daten exportieren</span><p class="helper">CSV/Excel Export bereitstellen.</p></div>'
-        . '<div class="tile"><span class="tile-meta">Optional</span><span class="tile-title">Settings</span><p class="helper">Mandanten- und App-Einstellungen.</p></div>'
-        . '<div class="tile"><span class="tile-meta">Optional</span><span class="tile-title">Trainerverwaltung</span><p class="helper">Trainerprofile verwalten.</p></div>'
+        . '</section>'
+        . '<section class="card">'
+        . '<div class="section-title"><h2>Trainings verwalten</h2><span class="badge">CRUD</span></div>'
+        . '<p class="helper">Trainings können nur gelöscht werden, wenn keine Einteilungen existieren. Löschungen werden als Soft-Delete gespeichert.</p>'
+        . $flashHtml
+        . '<form class="form-grid cols-2" method="get" action="/admin">'
+        . '<div><label for="filter_start">Zeitraum von</label><input id="filter_start" name="filter_start" type="date" value="' . htmlspecialchars($filterStart) . '"></div>'
+        . '<div><label for="filter_end">Zeitraum bis</label><input id="filter_end" name="filter_end" type="date" value="' . htmlspecialchars($filterEnd) . '"></div>'
+        . '<div><label for="filter_group">Gruppe</label><select id="filter_group" name="filter_group">' . $filterGroupOptions . '</select></div>'
+        . '<div><label for="filter_status">Status</label><select id="filter_status" name="filter_status">' . $filterStatusOptions . '</select></div>'
+        . '<div class="admin-actions">'
+        . '<button class="secondary" type="submit">Filter anwenden</button>'
+        . '<a class="button-link secondary" href="/admin">Filter zurücksetzen</a>'
         . '</div>'
+        . '</form>'
+        . '</section>'
+        . '<section class="card">'
+        . '<h2>Liste</h2>'
+        . '<div class="admin-list">' . $trainingsHtml . '</div>'
+        . '</section>'
+        . $editSection
+        . $createSection;
+}
+
+function handleTrainingAdminPost(string $rootPath): array
+{
+    $action = trim((string) ($_POST['action'] ?? ''));
+    $store = loadTrainingStore($rootPath);
+    $assignments = loadTrainingAssignments($rootPath);
+
+    if ($action === 'create') {
+        $input = normalizeTrainingInput($_POST);
+        if ($input['datum'] === '' || $input['start'] === '' || $input['ende'] === '' || $input['gruppe'] === '') {
+            return ['Bitte Datum, Start, Ende und Gruppe ausfüllen.', 'error'];
+        }
+
+        $trainingId = generateTrainingId($rootPath, $input['datum']);
+        $input['training_id'] = $trainingId;
+        $input['dauer_stunden'] = calculateDuration($input['start'], $input['ende']);
+        $input['updated_at'] = date('c');
+        $input['created_at'] = $input['updated_at'];
+
+        $store['trainings'][$trainingId] = $input;
+        saveTrainingStore($rootPath, $store);
+
+        return ['Training angelegt.', 'success'];
+    }
+
+    if ($action === 'update') {
+        $trainingId = trim((string) ($_POST['training_id'] ?? ''));
+        if ($trainingId === '') {
+            return ['Training-ID fehlt.', 'error'];
+        }
+
+        $input = normalizeTrainingInput($_POST);
+        $input['training_id'] = $trainingId;
+        $input['dauer_stunden'] = calculateDuration($input['start'], $input['ende']);
+        $input['updated_at'] = date('c');
+
+        $store['trainings'][$trainingId] = $input;
+        saveTrainingStore($rootPath, $store);
+
+        return ['Training gespeichert.', 'success'];
+    }
+
+    if ($action === 'delete') {
+        $trainingId = trim((string) ($_POST['training_id'] ?? ''));
+        if ($trainingId === '') {
+            return ['Training-ID fehlt.', 'error'];
+        }
+        if (isset($assignments[$trainingId])) {
+            return ['Löschen nicht möglich: Einteilungen existieren.', 'error'];
+        }
+
+        $store['deleted'][$trainingId] = date('c');
+        saveTrainingStore($rootPath, $store);
+
+        return ['Training gelöscht (Soft-Delete).', 'success'];
+    }
+
+    return ['Unbekannte Aktion.', 'error'];
+}
+
+function renderTrainingForm(string $title, string $action, array $training, array $statusOptions): string
+{
+    $trainingId = htmlspecialchars((string) ($training['training_id'] ?? ''));
+    $datumIso = normalizeDate($training['datum'] ?? '');
+    $startValue = htmlspecialchars((string) ($training['start'] ?? ''));
+    $endeValue = htmlspecialchars((string) ($training['ende'] ?? ''));
+    $gruppeValue = htmlspecialchars((string) ($training['gruppe'] ?? ''));
+    $ortValue = htmlspecialchars((string) ($training['ort'] ?? ''));
+    $benoetigtValue = htmlspecialchars((string) ($training['benoetigt_trainer'] ?? ''));
+    $statusValue = (string) ($training['status'] ?? '');
+    $ausfallValue = htmlspecialchars((string) ($training['ausfall_grund'] ?? ''));
+    $bemerkungValue = htmlspecialchars((string) ($training['bemerkung'] ?? ''));
+
+    $statusOptionsHtml = '';
+    foreach ($statusOptions as $status) {
+        $selected = $status === $statusValue ? ' selected' : '';
+        $statusOptionsHtml .= '<option value="' . htmlspecialchars($status) . '"' . $selected . '>' . htmlspecialchars($status) . '</option>';
+    }
+
+    $titleHtml = htmlspecialchars($title);
+
+    return '<section class="card">'
+        . '<div class="section-title"><h2>' . $titleHtml . '</h2></div>'
+        . '<form class="form-grid" method="post" action="/admin">'
+        . '<input type="hidden" name="action" value="' . htmlspecialchars($action) . '">'
+        . ($trainingId !== '' ? '<input type="hidden" name="training_id" value="' . $trainingId . '">' : '')
+        . '<div class="form-grid cols-2">'
+        . '<div><label for="datum_' . $action . '">Datum</label><input id="datum_' . $action . '" name="datum" type="date" value="' . htmlspecialchars($datumIso) . '" required></div>'
+        . '<div><label for="gruppe_' . $action . '">Gruppe</label><input id="gruppe_' . $action . '" name="gruppe" value="' . $gruppeValue . '" required></div>'
+        . '<div><label for="start_' . $action . '">Start</label><input id="start_' . $action . '" name="start" type="time" value="' . $startValue . '" required></div>'
+        . '<div><label for="ende_' . $action . '">Ende</label><input id="ende_' . $action . '" name="ende" type="time" value="' . $endeValue . '" required></div>'
+        . '<div><label for="ort_' . $action . '">Ort</label><input id="ort_' . $action . '" name="ort" value="' . $ortValue . '"></div>'
+        . '<div><label for="benoetigt_' . $action . '">Benötigt Trainer:innen</label><input id="benoetigt_' . $action . '" name="benoetigt_trainer" type="number" min="0" value="' . $benoetigtValue . '"></div>'
+        . '<div><label for="status_' . $action . '">Status</label><select id="status_' . $action . '" name="status">' . $statusOptionsHtml . '</select></div>'
+        . '<div><label for="ausfall_' . $action . '">Ausfallgrund</label><input id="ausfall_' . $action . '" name="ausfall_grund" value="' . $ausfallValue . '"></div>'
+        . '</div>'
+        . '<div><label for="bemerkung_' . $action . '">Bemerkung</label><textarea id="bemerkung_' . $action . '" name="bemerkung">' . $bemerkungValue . '</textarea></div>'
+        . '<button class="primary" type="submit">Speichern</button>'
+        . '</form>'
         . '</section>';
+}
+
+function normalizeTrainingInput(array $input): array
+{
+    $datum = normalizeDate($input['datum'] ?? '');
+    $dateForStore = $datum !== '' ? formatDateForStore($datum) : '';
+
+    return [
+        'datum' => $dateForStore,
+        'start' => normalizeTime($input['start'] ?? ''),
+        'ende' => normalizeTime($input['ende'] ?? ''),
+        'gruppe' => trim((string) ($input['gruppe'] ?? '')),
+        'ort' => trim((string) ($input['ort'] ?? '')),
+        'benoetigt_trainer' => max(0, (int) ($input['benoetigt_trainer'] ?? 0)),
+        'status' => trim((string) ($input['status'] ?? 'geplant')),
+        'ausfall_grund' => trim((string) ($input['ausfall_grund'] ?? '')),
+        'bemerkung' => trim((string) ($input['bemerkung'] ?? '')),
+    ];
+}
+
+function loadTrainingRecords(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/TRAININGS.html');
+    if (!$rows) {
+        return [];
+    }
+
+    [$header, $dataRows] = $rows;
+    $header = normalizeHeaderCells($header);
+
+    $records = [];
+    foreach ($dataRows as $row) {
+        $row = normalizeRowCells($header, $row);
+        $assoc = array_combine($header, $row);
+        if (!$assoc) {
+            continue;
+        }
+
+        $trainingId = trim((string) ($assoc['training_id'] ?? ''));
+        if ($trainingId === '') {
+            continue;
+        }
+
+        $records[$trainingId] = [
+            'training_id' => $trainingId,
+            'datum' => trim((string) ($assoc['datum'] ?? '')),
+            'start' => normalizeTime($assoc['start'] ?? ''),
+            'ende' => normalizeTime($assoc['ende'] ?? ''),
+            'dauer_stunden' => trim((string) ($assoc['dauer_stunden'] ?? '')),
+            'gruppe' => trim((string) ($assoc['gruppe'] ?? '')),
+            'ort' => trim((string) ($assoc['ort'] ?? '')),
+            'benoetigt_trainer' => trim((string) ($assoc['benoetigt_trainer'] ?? '')),
+            'status' => trim((string) ($assoc['status'] ?? '')),
+            'ausfall_grund' => trim((string) ($assoc['ausfall_grund'] ?? '')),
+            'bemerkung' => trim((string) ($assoc['bemerkung'] ?? '')),
+        ];
+    }
+
+    $store = loadTrainingStore($rootPath);
+    $merged = [];
+    foreach ($records as $id => $record) {
+        if (isset($store['deleted'][$id])) {
+            continue;
+        }
+        if (isset($store['trainings'][$id])) {
+            $record = array_merge($record, $store['trainings'][$id]);
+        }
+        $merged[$id] = $record;
+    }
+
+    foreach ($store['trainings'] as $id => $record) {
+        if (isset($merged[$id]) || isset($store['deleted'][$id])) {
+            continue;
+        }
+        $merged[$id] = array_merge([
+            'training_id' => $id,
+            'datum' => '',
+            'start' => '',
+            'ende' => '',
+            'dauer_stunden' => '',
+            'gruppe' => '',
+            'ort' => '',
+            'benoetigt_trainer' => '',
+            'status' => '',
+            'ausfall_grund' => '',
+            'bemerkung' => '',
+        ], $record);
+    }
+
+    return array_values($merged);
+}
+
+function collectTrainingGroups(array $trainings): array
+{
+    $groups = [];
+    foreach ($trainings as $training) {
+        $group = trim((string) ($training['gruppe'] ?? ''));
+        if ($group !== '') {
+            $groups[$group] = true;
+        }
+    }
+    $groupList = array_keys($groups);
+    sort($groupList, SORT_NATURAL | SORT_FLAG_CASE);
+    return $groupList;
+}
+
+function collectTrainingStatuses(array $trainings): array
+{
+    $defaults = ['geplant', 'stattgefunden', 'ausgefallen'];
+    $statuses = array_fill_keys($defaults, true);
+    foreach ($trainings as $training) {
+        $status = trim((string) ($training['status'] ?? ''));
+        if ($status !== '') {
+            $statuses[$status] = true;
+        }
+    }
+    $list = array_keys($statuses);
+    sort($list, SORT_NATURAL | SORT_FLAG_CASE);
+    return $list;
+}
+
+function trainingStatusBadge(string $status): string
+{
+    $normalized = strtolower($status);
+    $class = 'badge';
+    if ($normalized === 'stattgefunden') {
+        $class .= ' success';
+    } elseif ($normalized === 'ausgefallen') {
+        $class .= ' danger';
+    } elseif ($normalized === 'geplant') {
+        $class .= ' warning';
+    }
+
+    return '<span class="' . $class . '">' . htmlspecialchars($status) . '</span>';
+}
+
+function findTrainingById(array $trainings, string $trainingId): ?array
+{
+    foreach ($trainings as $training) {
+        if ($training['training_id'] === $trainingId) {
+            return $training;
+        }
+    }
+    return null;
+}
+
+function loadTrainingAssignments(string $rootPath): array
+{
+    $rows = loadHtmlRows($rootPath . '/database/EINTEILUNGEN.html');
+    if (!$rows) {
+        return [];
+    }
+
+    [$header, $dataRows] = $rows;
+    $header = normalizeHeaderCells($header);
+
+    $trainingIndex = array_search('training_id', $header, true);
+    if ($trainingIndex === false) {
+        return [];
+    }
+
+    $assignments = [];
+    foreach ($dataRows as $row) {
+        $row = normalizeRowCells($header, $row);
+        $trainingId = trim((string) ($row[$trainingIndex] ?? ''));
+        if ($trainingId !== '') {
+            $assignments[$trainingId] = true;
+        }
+    }
+
+    return $assignments;
+}
+
+function loadTrainingStore(string $rootPath): array
+{
+    $path = $rootPath . '/storage/trainings.json';
+    if (!is_file($path)) {
+        return ['trainings' => [], 'deleted' => []];
+    }
+
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data)) {
+        return ['trainings' => [], 'deleted' => []];
+    }
+
+    $trainings = isset($data['trainings']) && is_array($data['trainings']) ? $data['trainings'] : [];
+    $deleted = isset($data['deleted']) && is_array($data['deleted']) ? $data['deleted'] : [];
+
+    return ['trainings' => $trainings, 'deleted' => $deleted];
+}
+
+function saveTrainingStore(string $rootPath, array $store): void
+{
+    $path = $rootPath . '/storage/trainings.json';
+    $payload = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    file_put_contents($path, $payload === false ? '{}' : $payload);
+}
+
+function generateTrainingId(string $rootPath, string $dateValue): string
+{
+    $timestamp = parseDateToTimestamp($dateValue) ?? time();
+    $year = (int) date('Y', $timestamp);
+
+    $existing = loadTrainingRecords($rootPath);
+    $max = 0;
+    foreach ($existing as $training) {
+        if (preg_match('/^TR-(\\d{4})-(\\d{3})$/', $training['training_id'], $matches)) {
+            if ((int) $matches[1] === $year) {
+                $max = max($max, (int) $matches[2]);
+            }
+        }
+    }
+
+    $next = $max + 1;
+    return sprintf('TR-%d-%03d', $year, $next);
+}
+
+function normalizeHeaderCells(array $header): array
+{
+    $normalized = array_map(static fn (string $cell): string => strtolower(trim($cell)), $header);
+    if ($normalized !== [] && ($normalized[0] === '' || ctype_digit($normalized[0]))) {
+        array_shift($normalized);
+    }
+    return $normalized;
+}
+
+function normalizeRowCells(array $header, array $row): array
+{
+    if ($header !== [] && isset($row[0]) && ctype_digit(trim((string) $row[0]))) {
+        array_shift($row);
+    }
+    return array_pad($row, count($header), '');
+}
+
+function normalizeDate(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $value)) {
+        return $value;
+    }
+
+    $date = DateTime::createFromFormat('d.m.Y', $value);
+    if ($date instanceof DateTime) {
+        return $date->format('Y-m-d');
+    }
+
+    return '';
+}
+
+function formatDateForStore(string $value): string
+{
+    $date = DateTime::createFromFormat('Y-m-d', $value);
+    if ($date instanceof DateTime) {
+        return $date->format('d.m.Y');
+    }
+    return '';
+}
+
+function normalizeTime(string $value): string
+{
+    $value = trim($value);
+    if ($value === '') {
+        return '';
+    }
+
+    if (preg_match('/^\\d{1,2}:\\d{2}$/', $value)) {
+        [$hours, $minutes] = explode(':', $value);
+        return sprintf('%02d:%02d', (int) $hours, (int) $minutes);
+    }
+
+    return '';
+}
+
+function parseDateToTimestamp(string $value): ?int
+{
+    $value = trim($value);
+    if ($value === '') {
+        return null;
+    }
+
+    if (preg_match('/^\\d{4}-\\d{2}-\\d{2}$/', $value)) {
+        $date = DateTime::createFromFormat('Y-m-d', $value);
+    } else {
+        $date = DateTime::createFromFormat('d.m.Y', $value);
+    }
+
+    if (!$date instanceof DateTime) {
+        return null;
+    }
+
+    return (int) $date->format('U');
+}
+
+function calculateDuration(string $start, string $end): string
+{
+    if ($start === '' || $end === '') {
+        return '';
+    }
+
+    $startDate = DateTime::createFromFormat('H:i', $start);
+    $endDate = DateTime::createFromFormat('H:i', $end);
+    if (!$startDate instanceof DateTime || !$endDate instanceof DateTime) {
+        return '';
+    }
+
+    $interval = $startDate->diff($endDate);
+    if ($interval->invert === 1) {
+        return '';
+    }
+
+    $hours = str_pad((string) $interval->h, 2, '0', STR_PAD_LEFT);
+    $minutes = str_pad((string) $interval->i, 2, '0', STR_PAD_LEFT);
+    return $hours . ':' . $minutes;
 }
 
 function renderForbidden(): string
