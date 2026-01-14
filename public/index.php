@@ -35,7 +35,8 @@ function resolveRoute(string $path, array $settings, string $rootPath): array
     return match ($path) {
         '/login' => handleLogin($settings, $rootPath),
         '/uebersicht' => ['Übersicht', renderOverview(), 'uebersicht', true, $statusCode],
-        '/einsaetze' => ['Einsätze', renderEinsaetze(), 'einsaetze', false, $statusCode],
+        '/einsaetze' => ['Einsätze', renderEinsaetze($rootPath), 'einsaetze', false, $statusCode],
+        '/training' => ['Training', renderTrainingDetail($rootPath), 'einsaetze', false, $statusCode],
         '/abrechnung' => ['Abrechnung', renderAbrechnung(), 'abrechnung', false, $statusCode],
         '/mehr' => ['Mehr', renderMehr(), 'mehr', true, $statusCode],
         '/admin' => renderAdmin($settings, $rootPath),
@@ -268,6 +269,89 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             padding: 1.25rem;
             box-shadow: 0 8px 24px rgba(14, 30, 37, 0.08);
             margin-bottom: 1.25rem;
+        }
+        .tab-bar {
+            display: flex;
+            gap: 0.5rem;
+            background: #fff;
+            padding: 0.4rem;
+            border-radius: 14px;
+            box-shadow: 0 6px 16px rgba(14, 30, 37, 0.06);
+            margin-bottom: 1rem;
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 0.55rem 0.6rem;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            color: #6b7280;
+        }
+        .tab.active {
+            background: var(--brand-soft);
+            color: var(--brand-color);
+        }
+        .einsatz-list {
+            display: grid;
+            gap: 0.8rem;
+        }
+        .einsatz-card {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            padding: 1rem;
+            border-radius: 14px;
+            border: 1px solid #e5e7eb;
+            background: #fff;
+            text-decoration: none;
+            color: inherit;
+            box-shadow: 0 6px 16px rgba(14, 30, 37, 0.06);
+        }
+        .einsatz-card:hover {
+            border-color: #cbd5f5;
+        }
+        .einsatz-card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .einsatz-time {
+            font-weight: 600;
+            font-size: 1rem;
+        }
+        .einsatz-main {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+        .einsatz-group {
+            font-weight: 600;
+        }
+        .einsatz-date {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+        .detail-list {
+            display: grid;
+            gap: 0.6rem;
+            margin-top: 1rem;
+        }
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            padding-bottom: 0.4rem;
+            border-bottom: 1px solid #eef2f7;
+            font-size: 0.95rem;
+        }
+        .detail-label {
+            color: #6b7280;
+        }
+        .detail-value {
+            font-weight: 600;
+            text-align: right;
         }
         .bottom-nav {
             position: fixed;
@@ -546,14 +630,195 @@ function renderOverview(): string
         . '</section>';
 }
 
-function renderEinsaetze(): string
+function renderEinsaetze(string $rootPath): string
 {
+    $trainings = loadTrainingRecords($rootPath);
+    $tab = strtolower(trim((string) ($_GET['tab'] ?? 'kommend')));
+    $tab = $tab === 'vergangen' ? 'vergangen' : 'kommend';
+
+    $today = (int) (new DateTime('today'))->format('U');
+    $upcoming = [];
+    $past = [];
+
+    foreach ($trainings as $training) {
+        $status = strtolower(trim((string) ($training['status'] ?? '')));
+        $isPastStatus = in_array($status, ['stattgefunden', 'ausgefallen'], true);
+        $dateTimestamp = parseDateToTimestamp((string) ($training['datum'] ?? ''));
+        $isPastDate = $dateTimestamp !== null && $dateTimestamp < $today;
+        if ($isPastStatus || $isPastDate) {
+            $past[] = $training;
+        } else {
+            $upcoming[] = $training;
+        }
+    }
+
+    usort($upcoming, static function (array $a, array $b): int {
+        $dateA = parseDateToTimestamp((string) ($a['datum'] ?? '')) ?? PHP_INT_MAX;
+        $dateB = parseDateToTimestamp((string) ($b['datum'] ?? '')) ?? PHP_INT_MAX;
+        if ($dateA === $dateB) {
+            return strcmp((string) ($a['start'] ?? ''), (string) ($b['start'] ?? ''));
+        }
+        return $dateA <=> $dateB;
+    });
+
+    usort($past, static function (array $a, array $b): int {
+        $dateA = parseDateToTimestamp((string) ($a['datum'] ?? '')) ?? 0;
+        $dateB = parseDateToTimestamp((string) ($b['datum'] ?? '')) ?? 0;
+        if ($dateA === $dateB) {
+            return strcmp((string) ($b['start'] ?? ''), (string) ($a['start'] ?? ''));
+        }
+        return $dateB <=> $dateA;
+    });
+
+    $activeList = $tab === 'vergangen' ? $past : $upcoming;
+    $emptyText = $tab === 'vergangen'
+        ? 'Keine vergangenen Einsätze gefunden.'
+        : 'Keine kommenden Einsätze ab heute geplant.';
+
+    $cardsHtml = '';
+    foreach ($activeList as $training) {
+        $trainingId = (string) ($training['training_id'] ?? '');
+        $timeLabel = formatTrainingTimeLabel($training);
+        $timeLabel = $timeLabel !== '' ? $timeLabel : 'Uhrzeit offen';
+        $dateLabel = formatTrainingDateLabel((string) ($training['datum'] ?? ''));
+        $dateLabel = $dateLabel !== '' ? $dateLabel : 'Datum offen';
+        $groupLabel = trim((string) ($training['gruppe'] ?? ''));
+        $groupLabel = $groupLabel !== '' ? $groupLabel : 'Gruppe offen';
+        $statusBadge = renderEinsatzStatusBadge((string) ($training['status'] ?? ''));
+        $location = trim((string) ($training['ort'] ?? ''));
+        $locationHtml = $location !== '' ? '<p class="helper">' . htmlspecialchars($location) . '</p>' : '';
+        $detailLink = $trainingId !== '' ? '/training?training_id=' . rawurlencode($trainingId) : '/training';
+
+        $cardsHtml .= '<a class="einsatz-card" href="' . $detailLink . '">'
+            . '<div class="einsatz-card-top"><span class="einsatz-time">' . htmlspecialchars($timeLabel) . '</span>' . $statusBadge . '</div>'
+            . '<div class="einsatz-main">'
+            . '<span class="einsatz-group">' . htmlspecialchars($groupLabel) . '</span>'
+            . '<span class="einsatz-date">' . htmlspecialchars($dateLabel) . '</span>'
+            . '</div>'
+            . $locationHtml
+            . '</a>';
+    }
+
+    if ($cardsHtml === '') {
+        $cardsHtml = '<p class="helper">' . htmlspecialchars($emptyText) . '</p>';
+    }
+
+    $tabs = [
+        'kommend' => 'Kommend',
+        'vergangen' => 'Vergangene',
+    ];
+
+    $tabHtml = '<div class="tab-bar" role="tablist" aria-label="Einsatzübersicht">';
+    foreach ($tabs as $key => $label) {
+        $isActive = $tab === $key;
+        $class = $isActive ? 'tab active' : 'tab';
+        $tabHtml .= '<a class="' . $class . '" href="/einsaetze?tab=' . $key . '" role="tab" aria-selected="' . ($isActive ? 'true' : 'false') . '">' . htmlspecialchars($label) . '</a>';
+    }
+    $tabHtml .= '</div>';
+
+    $helperText = $tab === 'vergangen'
+        ? 'Vor heute oder bereits als stattgefunden/ausgefallen markiert.'
+        : 'Ab heute geplante Einsätze.';
+
     return '<section class="card">'
         . '<h1>Einsätze</h1>'
-        . '<p class="helper">Alle Trainingseinheiten und Turniere in einer Liste.</p>'
-        . '<div class="card"><strong>Montag, 18:00</strong><p class="helper">U12 Training · Halle 1</p></div>'
-        . '<div class="card"><strong>Mittwoch, 17:30</strong><p class="helper">U10 Training · Halle 3</p></div>'
+        . '<p class="helper">' . htmlspecialchars($helperText) . '</p>'
+        . '</section>'
+        . $tabHtml
+        . '<section class="einsatz-list">' . $cardsHtml . '</section>';
+}
+
+function renderTrainingDetail(string $rootPath): string
+{
+    $trainingId = trim((string) ($_GET['training_id'] ?? ''));
+    $training = $trainingId !== '' ? findTrainingById(loadTrainingRecords($rootPath), $trainingId) : null;
+
+    if (!$training) {
+        return '<section class="card">'
+            . '<h1>Training nicht gefunden</h1>'
+            . '<p class="helper">Der Einsatz konnte nicht geladen werden. Bitte wähle einen Eintrag aus der Übersicht.</p>'
+            . '<a class="button-link secondary" href="/einsaetze">Zurück zu Einsätzen</a>'
+            . '</section>';
+    }
+
+    $dateLabel = formatTrainingDateLabel((string) ($training['datum'] ?? ''));
+    $dateLabel = $dateLabel !== '' ? $dateLabel : 'Datum offen';
+    $timeLabel = formatTrainingTimeLabel($training);
+    $timeLabel = $timeLabel !== '' ? $timeLabel : 'Uhrzeit offen';
+    $groupLabel = trim((string) ($training['gruppe'] ?? ''));
+    $groupLabel = $groupLabel !== '' ? $groupLabel : 'Gruppe offen';
+    $location = trim((string) ($training['ort'] ?? ''));
+    $location = $location !== '' ? $location : 'Ort offen';
+    $statusBadge = renderEinsatzStatusBadge((string) ($training['status'] ?? ''));
+    $note = trim((string) ($training['bemerkung'] ?? ''));
+    $cancelReason = trim((string) ($training['ausfall_grund'] ?? ''));
+
+    $details = '<div class="detail-list">'
+        . '<div class="detail-row"><span class="detail-label">Datum</span><span class="detail-value">' . htmlspecialchars($dateLabel) . '</span></div>'
+        . '<div class="detail-row"><span class="detail-label">Uhrzeit</span><span class="detail-value">' . htmlspecialchars($timeLabel) . '</span></div>'
+        . '<div class="detail-row"><span class="detail-label">Gruppe</span><span class="detail-value">' . htmlspecialchars($groupLabel) . '</span></div>'
+        . '<div class="detail-row"><span class="detail-label">Ort</span><span class="detail-value">' . htmlspecialchars($location) . '</span></div>'
+        . '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">' . $statusBadge . '</span></div>'
+        . '</div>';
+
+    $noteHtml = '';
+    if ($cancelReason !== '') {
+        $noteHtml .= '<p class="helper"><strong>Absagegrund:</strong> ' . htmlspecialchars($cancelReason) . '</p>';
+    }
+    if ($note !== '') {
+        $noteHtml .= '<p class="helper"><strong>Hinweis:</strong> ' . htmlspecialchars($note) . '</p>';
+    }
+
+    return '<section class="card">'
+        . '<a class="button-link secondary" href="/einsaetze">Zurück zu Einsätzen</a>'
+        . '<h1>Training-Detail</h1>'
+        . $details
+        . $noteHtml
         . '</section>';
+}
+
+function formatTrainingDateLabel(string $date): string
+{
+    $timestamp = parseDateToTimestamp($date);
+    if ($timestamp === null) {
+        return $date;
+    }
+    return date('d.m.Y', $timestamp);
+}
+
+function formatTrainingTimeLabel(array $training): string
+{
+    $start = trim((string) ($training['start'] ?? ''));
+    $end = trim((string) ($training['ende'] ?? ''));
+    if ($start === '' && $end === '') {
+        return '';
+    }
+    if ($start !== '' && $end !== '') {
+        return $start . '–' . $end;
+    }
+    return $start !== '' ? $start : $end;
+}
+
+function renderEinsatzStatusBadge(string $status): string
+{
+    $normalized = strtolower(trim($status));
+    $labelMap = [
+        'geplant' => 'geplant',
+        'ausgefallen' => 'abgesagt',
+        'stattgefunden' => 'erfasst',
+    ];
+    $label = $labelMap[$normalized] ?? ($status !== '' ? $status : 'offen');
+
+    $class = 'badge';
+    if ($normalized === 'stattgefunden') {
+        $class .= ' success';
+    } elseif ($normalized === 'ausgefallen') {
+        $class .= ' danger';
+    } elseif ($normalized === 'geplant') {
+        $class .= ' warning';
+    }
+
+    return '<span class="' . $class . '">' . htmlspecialchars($label) . '</span>';
 }
 
 function renderAbrechnung(): string
