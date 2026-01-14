@@ -303,6 +303,31 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 1rem;
         }
+        .tile-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 1rem;
+        }
+        .tile {
+            background: #fff;
+            border-radius: 16px;
+            padding: 1rem;
+            box-shadow: 0 6px 16px rgba(14, 30, 37, 0.08);
+            display: flex;
+            flex-direction: column;
+            gap: 0.35rem;
+            min-height: 110px;
+        }
+        .tile-title {
+            font-weight: 600;
+            font-size: 0.98rem;
+        }
+        .tile-meta {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #6b7280;
+        }
         .helper {
             color: #4b5563;
             line-height: 1.5;
@@ -411,9 +436,15 @@ function renderAdminPage(array $settings): string
 
     return '<section class="card">'
         . '<h1>Admin</h1>'
-        . '<p class="helper">Nur Administrator:innen können diese Seite sehen.</p>'
-        . '<div class="card"><strong>Branding</strong><p class="helper">Aktueller Mandant: ' . $brandName . '</p></div>'
-        . '<div class="card"><strong>Systemstatus</strong><p class="helper">Alle Dienste sind verfügbar.</p></div>'
+        . '<p class="helper">Nur Administrator:innen können diese Seite sehen. Mandant: ' . $brandName . '.</p>'
+        . '<div class="tile-grid">'
+        . '<div class="tile"><span class="tile-meta">Planung</span><span class="tile-title">Training anlegen</span><p class="helper">Neue Einheiten hinzufügen.</p></div>'
+        . '<div class="tile"><span class="tile-meta">Planung</span><span class="tile-title">Trainer zuweisen</span><p class="helper">Trainer:innen den Einheiten zuordnen.</p></div>'
+        . '<div class="tile"><span class="tile-meta">Abrechnung</span><span class="tile-title">Monat freigeben / Monat sperren</span><p class="helper">Abrechnungsmonat steuern.</p></div>'
+        . '<div class="tile"><span class="tile-meta">Reporting</span><span class="tile-title">Daten exportieren</span><p class="helper">CSV/Excel Export bereitstellen.</p></div>'
+        . '<div class="tile"><span class="tile-meta">Optional</span><span class="tile-title">Settings</span><p class="helper">Mandanten- und App-Einstellungen.</p></div>'
+        . '<div class="tile"><span class="tile-meta">Optional</span><span class="tile-title">Trainerverwaltung</span><p class="helper">Trainerprofile verwalten.</p></div>'
+        . '</div>'
         . '</section>';
 }
 
