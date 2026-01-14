@@ -102,12 +102,13 @@ function renderAdmin(array $settings, string $rootPath): array
 
     $message = null;
     $messageType = 'success';
+    $seriesSummary = [];
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        [$message, $messageType] = handleTrainingAdminPost($rootPath);
+        [$message, $messageType, $seriesSummary] = handleTrainingAdminPost($rootPath);
     }
 
-    return ['Admin', renderAdminPage($settings, $rootPath, $message, $messageType), null, true, 200];
+    return ['Admin', renderAdminPage($settings, $rootPath, $message, $messageType, $seriesSummary), null, true, 200];
 }
 
 function renderNotFound(): array
@@ -536,7 +537,7 @@ function renderMehr(): string
         . '</section>';
 }
 
-function renderAdminPage(array $settings, string $rootPath, ?string $message, string $messageType): string
+function renderAdminPage(array $settings, string $rootPath, ?string $message, string $messageType, array $seriesSummary): string
 {
     $brandName = htmlspecialchars((string) $settings['brand_name']);
     $trainings = loadTrainingRecords($rootPath);
@@ -587,6 +588,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     if ($message !== null && $message !== '') {
         $flashHtml = '<div class="flash ' . htmlspecialchars($messageType) . '">' . htmlspecialchars($message) . '</div>';
     }
+    $seriesSummaryHtml = $seriesSummary !== [] ? renderTrainingSeriesSummary($seriesSummary) : '';
 
     $filterGroupOptions = '<option value="">Alle Gruppen</option>';
     foreach ($trainingGroups as $group) {
@@ -667,6 +669,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         'bemerkung' => '',
     ];
     $createSection = renderTrainingForm('Neues Training anlegen', 'create', $newTraining, $statusOptions);
+    $createSeriesSection = renderTrainingSeriesForm($statusOptions);
 
     return '<section class="card">'
         . '<h1>Admin</h1>'
@@ -676,6 +679,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<div class="section-title"><h2>Trainings verwalten</h2><span class="badge">CRUD</span></div>'
         . '<p class="helper">Trainings können nur gelöscht werden, wenn keine Einteilungen existieren. Löschungen werden als Soft-Delete gespeichert.</p>'
         . $flashHtml
+        . $seriesSummaryHtml
         . '<form class="form-grid cols-2" method="get" action="/admin">'
         . '<div><label for="filter_start">Zeitraum von</label><input id="filter_start" name="filter_start" type="date" value="' . htmlspecialchars($filterStart) . '"></div>'
         . '<div><label for="filter_end">Zeitraum bis</label><input id="filter_end" name="filter_end" type="date" value="' . htmlspecialchars($filterEnd) . '"></div>'
@@ -692,7 +696,8 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<div class="admin-list">' . $trainingsHtml . '</div>'
         . '</section>'
         . $editSection
-        . $createSection;
+        . $createSection
+        . $createSeriesSection;
 }
 
 function handleTrainingAdminPost(string $rootPath): array
@@ -704,7 +709,7 @@ function handleTrainingAdminPost(string $rootPath): array
     if ($action === 'create') {
         $input = normalizeTrainingInput($_POST);
         if ($input['datum'] === '' || $input['start'] === '' || $input['ende'] === '' || $input['gruppe'] === '') {
-            return ['Bitte Datum, Start, Ende und Gruppe ausfüllen.', 'error'];
+            return ['Bitte Datum, Start, Ende und Gruppe ausfüllen.', 'error', []];
         }
 
         $trainingId = generateTrainingId($rootPath, $input['datum']);
@@ -716,13 +721,13 @@ function handleTrainingAdminPost(string $rootPath): array
         $store['trainings'][$trainingId] = $input;
         saveTrainingStore($rootPath, $store);
 
-        return ['Training angelegt.', 'success'];
+        return ['Training angelegt.', 'success', []];
     }
 
     if ($action === 'update') {
         $trainingId = trim((string) ($_POST['training_id'] ?? ''));
         if ($trainingId === '') {
-            return ['Training-ID fehlt.', 'error'];
+            return ['Training-ID fehlt.', 'error', []];
         }
 
         $input = normalizeTrainingInput($_POST);
@@ -733,25 +738,89 @@ function handleTrainingAdminPost(string $rootPath): array
         $store['trainings'][$trainingId] = $input;
         saveTrainingStore($rootPath, $store);
 
-        return ['Training gespeichert.', 'success'];
+        return ['Training gespeichert.', 'success', []];
     }
 
     if ($action === 'delete') {
         $trainingId = trim((string) ($_POST['training_id'] ?? ''));
         if ($trainingId === '') {
-            return ['Training-ID fehlt.', 'error'];
+            return ['Training-ID fehlt.', 'error', []];
         }
         if (isset($assignments[$trainingId])) {
-            return ['Löschen nicht möglich: Einteilungen existieren.', 'error'];
+            return ['Löschen nicht möglich: Einteilungen existieren.', 'error', []];
         }
 
         $store['deleted'][$trainingId] = date('c');
         saveTrainingStore($rootPath, $store);
 
-        return ['Training gelöscht (Soft-Delete).', 'success'];
+        return ['Training gelöscht (Soft-Delete).', 'success', []];
     }
 
-    return ['Unbekannte Aktion.', 'error'];
+    if ($action === 'create_series') {
+        $seriesInput = normalizeTrainingSeriesInput($_POST);
+        if ($seriesInput['start_date'] === '' || $seriesInput['weekday'] === '' || $seriesInput['start_time'] === '' || $seriesInput['end_time'] === '' || $seriesInput['gruppe'] === '') {
+            return ['Bitte Wochentag, Startdatum, Start, Ende und Gruppe ausfüllen.', 'error', []];
+        }
+        if ($seriesInput['count'] < 1) {
+            return ['Bitte eine Anzahl an Terminen angeben.', 'error', []];
+        }
+
+        $seriesStart = DateTime::createFromFormat('Y-m-d', $seriesInput['start_date']);
+        if (!$seriesStart instanceof DateTime) {
+            return ['Startdatum ist ungültig.', 'error', []];
+        }
+
+        $targetWeekday = weekdayNameToIsoNumber($seriesInput['weekday']);
+        if ($targetWeekday === null) {
+            return ['Wochentag ist ungültig.', 'error', []];
+        }
+
+        $currentWeekday = (int) $seriesStart->format('N');
+        $daysToAdd = ($targetWeekday - $currentWeekday + 7) % 7;
+        if ($daysToAdd > 0) {
+            $seriesStart->modify('+' . $daysToAdd . ' days');
+        }
+
+        $existingIds = collectExistingTrainingIds($rootPath);
+        $yearCounters = [];
+        $summary = [];
+
+        for ($i = 0; $i < $seriesInput['count']; $i++) {
+            $trainingDate = clone $seriesStart;
+            if ($i > 0) {
+                $trainingDate->modify('+' . $i . ' weeks');
+            }
+
+            $trainingDateStore = $trainingDate->format('d.m.Y');
+            $year = (int) $trainingDate->format('Y');
+            $trainingId = nextTrainingId($year, $existingIds, $yearCounters);
+
+            $record = [
+                'training_id' => $trainingId,
+                'datum' => $trainingDateStore,
+                'start' => $seriesInput['start_time'],
+                'ende' => $seriesInput['end_time'],
+                'gruppe' => $seriesInput['gruppe'],
+                'ort' => $seriesInput['ort'],
+                'benoetigt_trainer' => $seriesInput['benoetigt_trainer'],
+                'status' => $seriesInput['status'],
+                'ausfall_grund' => '',
+                'bemerkung' => '',
+            ];
+            $record['dauer_stunden'] = calculateDuration($record['start'], $record['ende']);
+            $record['updated_at'] = date('c');
+            $record['created_at'] = $record['updated_at'];
+
+            $store['trainings'][$trainingId] = $record;
+            $summary[] = $record;
+        }
+
+        saveTrainingStore($rootPath, $store);
+
+        return ['Serie mit ' . count($summary) . ' Terminen angelegt.', 'success', $summary];
+    }
+
+    return ['Unbekannte Aktion.', 'error', []];
 }
 
 function renderTrainingForm(string $title, string $action, array $training, array $statusOptions): string
@@ -796,6 +865,67 @@ function renderTrainingForm(string $title, string $action, array $training, arra
         . '</section>';
 }
 
+function renderTrainingSeriesForm(array $statusOptions): string
+{
+    $weekdayOptions = renderWeekdayOptions('Montag');
+    $today = date('Y-m-d');
+    $statusOptionsHtml = '';
+    foreach ($statusOptions as $status) {
+        $selected = $status === 'geplant' ? ' selected' : '';
+        $statusOptionsHtml .= '<option value="' . htmlspecialchars($status) . '"' . $selected . '>' . htmlspecialchars($status) . '</option>';
+    }
+
+    return '<section class="card">'
+        . '<div class="section-title"><h2>Serie anlegen</h2><span class="badge">Mehrere Termine</span></div>'
+        . '<p class="helper">Erstellt mehrere Trainings auf Basis eines Wochentags und Startdatums. Alle Termine sind danach einzeln editierbar.</p>'
+        . '<form class="form-grid" method="post" action="/admin">'
+        . '<input type="hidden" name="action" value="create_series">'
+        . '<div class="form-grid cols-2">'
+        . '<div><label for="series_weekday">Wochentag</label><select id="series_weekday" name="series_weekday">' . $weekdayOptions . '</select></div>'
+        . '<div><label for="series_start_date">Startdatum</label><input id="series_start_date" name="series_start_date" type="date" value="' . htmlspecialchars($today) . '" required></div>'
+        . '<div><label for="series_count">Anzahl Termine</label><input id="series_count" name="series_count" type="number" min="1" value="10" required></div>'
+        . '<div><label for="series_group">Gruppe</label><input id="series_group" name="series_group" required></div>'
+        . '<div><label for="series_start_time">Startzeit</label><input id="series_start_time" name="series_start_time" type="time" required></div>'
+        . '<div><label for="series_end_time">Endzeit</label><input id="series_end_time" name="series_end_time" type="time" required></div>'
+        . '<div><label for="series_location">Ort</label><input id="series_location" name="series_location"></div>'
+        . '<div><label for="series_needed">Benötigt Trainer:innen</label><input id="series_needed" name="series_needed" type="number" min="0" value="0"></div>'
+        . '<div><label for="series_status">Standard-Status</label><select id="series_status" name="series_status">' . $statusOptionsHtml . '</select></div>'
+        . '</div>'
+        . '<button class="primary" type="submit">Serie erstellen</button>'
+        . '</form>'
+        . '</section>';
+}
+
+function renderTrainingSeriesSummary(array $summary): string
+{
+    $itemsHtml = '';
+    foreach ($summary as $training) {
+        $date = htmlspecialchars($training['datum']);
+        $time = htmlspecialchars(trim($training['start'] . '–' . $training['ende']));
+        $group = htmlspecialchars($training['gruppe']);
+        $ort = htmlspecialchars($training['ort']);
+        $trainingId = htmlspecialchars($training['training_id']);
+
+        $itemsHtml .= '<li><strong>' . $date . '</strong> · ' . $time . ' · ' . $group . ' · ' . $ort . ' <span class="badge">' . $trainingId . '</span></li>';
+    }
+
+    return '<section class="card">'
+        . '<div class="section-title"><h2>Zusammenfassung der Serie</h2><span class="badge success">Neu</span></div>'
+        . '<ul class="helper">' . $itemsHtml . '</ul>'
+        . '</section>';
+}
+
+function renderWeekdayOptions(string $selected): string
+{
+    $weekdays = ['Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag', 'Sonntag'];
+    $options = '';
+    foreach ($weekdays as $weekday) {
+        $isSelected = $weekday === $selected ? ' selected' : '';
+        $options .= '<option value="' . htmlspecialchars($weekday) . '"' . $isSelected . '>' . htmlspecialchars($weekday) . '</option>';
+    }
+    return $options;
+}
+
 function normalizeTrainingInput(array $input): array
 {
     $datum = normalizeDate($input['datum'] ?? '');
@@ -812,6 +942,36 @@ function normalizeTrainingInput(array $input): array
         'ausfall_grund' => trim((string) ($input['ausfall_grund'] ?? '')),
         'bemerkung' => trim((string) ($input['bemerkung'] ?? '')),
     ];
+}
+
+function normalizeTrainingSeriesInput(array $input): array
+{
+    return [
+        'weekday' => trim((string) ($input['series_weekday'] ?? '')),
+        'start_date' => normalizeDate($input['series_start_date'] ?? ''),
+        'count' => max(0, (int) ($input['series_count'] ?? 0)),
+        'start_time' => normalizeTime($input['series_start_time'] ?? ''),
+        'end_time' => normalizeTime($input['series_end_time'] ?? ''),
+        'gruppe' => trim((string) ($input['series_group'] ?? '')),
+        'ort' => trim((string) ($input['series_location'] ?? '')),
+        'benoetigt_trainer' => max(0, (int) ($input['series_needed'] ?? 0)),
+        'status' => trim((string) ($input['series_status'] ?? 'geplant')),
+    ];
+}
+
+function weekdayNameToIsoNumber(string $weekday): ?int
+{
+    $map = [
+        'montag' => 1,
+        'dienstag' => 2,
+        'mittwoch' => 3,
+        'donnerstag' => 4,
+        'freitag' => 5,
+        'samstag' => 6,
+        'sonntag' => 7,
+    ];
+    $normalized = strtolower(trim($weekday));
+    return $map[$normalized] ?? null;
 }
 
 function loadTrainingRecords(string $rootPath): array
@@ -996,19 +1156,59 @@ function generateTrainingId(string $rootPath, string $dateValue): string
 {
     $timestamp = parseDateToTimestamp($dateValue) ?? time();
     $year = (int) date('Y', $timestamp);
+    $existingIds = collectExistingTrainingIds($rootPath);
+    $yearCounters = [];
 
-    $existing = loadTrainingRecords($rootPath);
-    $max = 0;
-    foreach ($existing as $training) {
-        if (preg_match('/^TR-(\\d{4})-(\\d{3})$/', $training['training_id'], $matches)) {
-            if ((int) $matches[1] === $year) {
-                $max = max($max, (int) $matches[2]);
-            }
+    return nextTrainingId($year, $existingIds, $yearCounters);
+}
+
+function collectExistingTrainingIds(string $rootPath): array
+{
+    $ids = [];
+    $records = loadTrainingRecords($rootPath);
+    foreach ($records as $training) {
+        $trainingId = trim((string) ($training['training_id'] ?? ''));
+        if ($trainingId !== '') {
+            $ids[$trainingId] = true;
         }
     }
 
-    $next = $max + 1;
-    return sprintf('TR-%d-%03d', $year, $next);
+    $store = loadTrainingStore($rootPath);
+    foreach ($store['trainings'] as $trainingId => $_record) {
+        if ($trainingId !== '') {
+            $ids[$trainingId] = true;
+        }
+    }
+    foreach ($store['deleted'] as $trainingId => $_timestamp) {
+        if ($trainingId !== '') {
+            $ids[$trainingId] = true;
+        }
+    }
+
+    return $ids;
+}
+
+function nextTrainingId(int $year, array &$existingIds, array &$yearCounters): string
+{
+    if (!isset($yearCounters[$year])) {
+        $max = 0;
+        foreach ($existingIds as $trainingId => $_value) {
+            if (preg_match('/^TR-(\\d{4})-(\\d{3})$/', $trainingId, $matches)) {
+                if ((int) $matches[1] === $year) {
+                    $max = max($max, (int) $matches[2]);
+                }
+            }
+        }
+        $yearCounters[$year] = $max + 1;
+    }
+
+    do {
+        $candidate = sprintf('TR-%d-%03d', $year, $yearCounters[$year]);
+        $yearCounters[$year]++;
+    } while (isset($existingIds[$candidate]));
+
+    $existingIds[$candidate] = true;
+    return $candidate;
 }
 
 function normalizeHeaderCells(array $header): array
