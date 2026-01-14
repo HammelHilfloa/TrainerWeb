@@ -36,7 +36,7 @@ function resolveRoute(string $path, array $settings, string $rootPath): array
         '/login' => handleLogin($settings, $rootPath),
         '/uebersicht' => ['Übersicht', renderOverview(), 'uebersicht', true, $statusCode],
         '/einsaetze' => ['Einsätze', renderEinsaetze($rootPath), 'einsaetze', false, $statusCode],
-        '/training' => ['Training', renderTrainingDetail($rootPath), 'einsaetze', false, $statusCode],
+        '/training' => renderTrainingRoute($rootPath, $statusCode),
         '/abrechnung' => ['Abrechnung', renderAbrechnung(), 'abrechnung', false, $statusCode],
         '/mehr' => ['Mehr', renderMehr(), 'mehr', true, $statusCode],
         '/admin' => renderAdmin($settings, $rootPath),
@@ -110,6 +110,18 @@ function renderAdmin(array $settings, string $rootPath): array
     }
 
     return ['Admin', renderAdminPage($settings, $rootPath, $message, $messageType, $seriesSummary), null, true, 200];
+}
+
+function renderTrainingRoute(string $rootPath, int $statusCode): array
+{
+    $message = null;
+    $messageType = 'success';
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        [$message, $messageType] = handleTrainingDetailPost($rootPath);
+    }
+
+    return ['Training', renderTrainingDetail($rootPath, $message, $messageType), 'einsaetze', false, $statusCode];
 }
 
 function renderNotFound(): array
@@ -424,6 +436,38 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             color: #4b5563;
             line-height: 1.5;
         }
+        .detail-header {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid #e5e7eb;
+            margin-bottom: 1rem;
+        }
+        .detail-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+        }
+        .detail-subtitle {
+            color: #6b7280;
+            font-size: 0.9rem;
+        }
+        .detail-meta {
+            color: #374151;
+            font-weight: 600;
+        }
+        .toggle-field {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 600;
+        }
+        .form-note {
+            font-size: 0.85rem;
+            color: #6b7280;
+        }
         .login-form {
             display: grid;
             gap: 0.9rem;
@@ -438,6 +482,10 @@ function renderLayout(string $title, string $content, array $settings, ?string $
             padding: 0.6rem 0.75rem;
             border-radius: 10px;
             border: 1px solid #d1d5db;
+        }
+        input[type="checkbox"] {
+            width: auto;
+            padding: 0;
         }
         button.primary,
         .button-link.primary {
@@ -728,7 +776,7 @@ function renderEinsaetze(string $rootPath): string
         . '<section class="einsatz-list">' . $cardsHtml . '</section>';
 }
 
-function renderTrainingDetail(string $rootPath): string
+function renderTrainingDetail(string $rootPath, ?string $message, string $messageType): string
 {
     $trainingId = trim((string) ($_GET['training_id'] ?? ''));
     $training = $trainingId !== '' ? findTrainingById(loadTrainingRecords($rootPath), $trainingId) : null;
@@ -753,12 +801,33 @@ function renderTrainingDetail(string $rootPath): string
     $note = trim((string) ($training['bemerkung'] ?? ''));
     $cancelReason = trim((string) ($training['ausfall_grund'] ?? ''));
 
+    $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
+    $trainer = $trainerId !== '' ? findTrainerById(loadTrainerRecords($rootPath), $trainerId) : null;
+    $assignment = null;
+    if ($trainerId !== '') {
+        $assignmentRecords = loadAssignmentRecords($rootPath);
+        foreach ($assignmentRecords as $assignmentRecord) {
+            if ($assignmentRecord['training_id'] !== $trainingId) {
+                continue;
+            }
+            if ($assignmentRecord['trainer_id'] !== $trainerId) {
+                continue;
+            }
+            if ($assignmentRecord['ausgetragen_am'] !== '') {
+                continue;
+            }
+            $assignment = $assignmentRecord;
+            break;
+        }
+    }
+
+    $monthStatus = resolveTrainingMonthStatus($rootPath, (string) ($training['datum'] ?? ''));
+    $isMonthLocked = isTrainingMonthLocked($monthStatus);
+    $isEditable = $assignment !== null && !$isMonthLocked;
+    $disabledAttr = $isEditable ? '' : ' disabled';
+
     $details = '<div class="detail-list">'
-        . '<div class="detail-row"><span class="detail-label">Datum</span><span class="detail-value">' . htmlspecialchars($dateLabel) . '</span></div>'
-        . '<div class="detail-row"><span class="detail-label">Uhrzeit</span><span class="detail-value">' . htmlspecialchars($timeLabel) . '</span></div>'
-        . '<div class="detail-row"><span class="detail-label">Gruppe</span><span class="detail-value">' . htmlspecialchars($groupLabel) . '</span></div>'
         . '<div class="detail-row"><span class="detail-label">Ort</span><span class="detail-value">' . htmlspecialchars($location) . '</span></div>'
-        . '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-value">' . $statusBadge . '</span></div>'
         . '</div>';
 
     $noteHtml = '';
@@ -769,12 +838,197 @@ function renderTrainingDetail(string $rootPath): string
         $noteHtml .= '<p class="helper"><strong>Hinweis:</strong> ' . htmlspecialchars($note) . '</p>';
     }
 
+    $flashHtml = '';
+    if ($message !== null && $message !== '') {
+        $flashHtml = '<div class="flash ' . htmlspecialchars($messageType) . '">' . htmlspecialchars($message) . '</div>';
+    }
+
+    $roleRates = loadRoleRates($rootPath);
+    $roleValue = $assignment['rolle'] ?? '';
+    $roleLabel = $roleValue !== '' ? $roleValue : (string) ($trainer['rolle_standard'] ?? '');
+    $canEditRole = isAdmin();
+
+    $roleOptions = '';
+    foreach ($roleRates as $role => $_rate) {
+        $selected = $role === $roleValue ? ' selected' : '';
+        $roleOptions .= '<option value="' . htmlspecialchars($role) . '"' . $selected . '>' . htmlspecialchars($role) . '</option>';
+    }
+    if ($roleOptions === '' && $roleLabel !== '') {
+        $roleOptions = '<option value="' . htmlspecialchars($roleLabel) . '">' . htmlspecialchars($roleLabel) . '</option>';
+    }
+
+    $attendance = strtoupper(trim((string) ($assignment['attendance'] ?? 'NEIN')));
+    $attendanceChecked = $attendance === 'JA';
+    $commentValue = trim((string) ($assignment['kommentar'] ?? ''));
+    $startValue = trim((string) ($assignment['einsatz_start'] ?? ''));
+    $endValue = trim((string) ($assignment['einsatz_ende'] ?? ''));
+
+    $monthLockHtml = '';
+    if ($isMonthLocked) {
+        $monthLockHtml = '<p class="helper"><strong>Monatsstatus:</strong> ' . htmlspecialchars($monthStatus)
+            . ' · Änderungen sind gesperrt.</p>';
+    }
+
+    $assignmentForm = '';
+    if ($assignment !== null) {
+        $roleField = '';
+        if ($canEditRole) {
+            $roleField = '<div><label for="rolle">Rolle</label><select id="rolle" name="rolle"' . $disabledAttr . '>'
+                . $roleOptions
+                . '</select></div>';
+        } elseif ($roleLabel !== '') {
+            $roleField = '<div><label>Rolle</label><div class="helper">' . htmlspecialchars($roleLabel) . '</div></div>';
+        }
+
+        $assignmentForm = '<form class="form-grid" method="post" action="/training?training_id=' . rawurlencode($trainingId) . '">'
+            . '<input type="hidden" name="action" value="update_training_detail">'
+            . '<input type="hidden" name="training_id" value="' . htmlspecialchars($trainingId) . '">'
+            . '<input type="hidden" name="einteilung_id" value="' . htmlspecialchars($assignment['einteilung_id']) . '">'
+            . $roleField
+            . '<div class="toggle-field"><input id="attendance" type="checkbox" name="attendance" value="JA"' . ($attendanceChecked ? ' checked' : '') . $disabledAttr . '>'
+            . '<label for="attendance">Teilnahme bestätigt</label></div>'
+            . '<div><label for="kommentar">Kommentar / Notiz</label><textarea id="kommentar" name="kommentar"' . $disabledAttr . '>'
+            . htmlspecialchars($commentValue) . '</textarea></div>'
+            . '<div class="form-grid cols-2">'
+            . '<div><label for="einsatz_start">Start (optional)</label><input id="einsatz_start" name="einsatz_start" type="time" value="' . htmlspecialchars($startValue) . '"' . $disabledAttr . '></div>'
+            . '<div><label for="einsatz_ende">Ende (optional)</label><input id="einsatz_ende" name="einsatz_ende" type="time" value="' . htmlspecialchars($endValue) . '"' . $disabledAttr . '></div>'
+            . '</div>'
+            . '<div class="form-note">Hinweis: Abrechnung erfolgt pro Einheit, Zeiten sind optional.</div>'
+            . '<button class="primary" type="submit"' . ($isEditable ? '' : ' disabled') . '>Speichern</button>'
+            . '</form>';
+    } else {
+        $assignmentForm = '<p class="helper">Für dieses Training bist du nicht eingeteilt. Änderungen sind nicht möglich.</p>';
+    }
+
+    $headerHtml = '<div class="detail-header">'
+        . '<div><div class="detail-title">' . htmlspecialchars($timeLabel) . '</div>'
+        . '<div class="detail-subtitle">' . htmlspecialchars($groupLabel) . '</div></div>'
+        . '<div class="detail-meta">' . htmlspecialchars($dateLabel) . '</div>'
+        . $statusBadge
+        . '</div>';
+
     return '<section class="card">'
         . '<a class="button-link secondary" href="/einsaetze">Zurück zu Einsätzen</a>'
+        . $flashHtml
         . '<h1>Training-Detail</h1>'
+        . $headerHtml
         . $details
         . $noteHtml
+        . $monthLockHtml
+        . $assignmentForm
         . '</section>';
+}
+
+function handleTrainingDetailPost(string $rootPath): array
+{
+    $action = trim((string) ($_POST['action'] ?? ''));
+    if ($action !== 'update_training_detail') {
+        return ['Aktion nicht unterstützt.', 'error'];
+    }
+
+    $trainingId = trim((string) ($_POST['training_id'] ?? ''));
+    $assignmentId = trim((string) ($_POST['einteilung_id'] ?? ''));
+    if ($trainingId === '' || $assignmentId === '') {
+        return ['Training oder Einteilung fehlt.', 'error'];
+    }
+
+    $training = findTrainingById(loadTrainingRecords($rootPath), $trainingId);
+    if (!$training) {
+        return ['Training nicht gefunden.', 'error'];
+    }
+
+    $monthStatus = resolveTrainingMonthStatus($rootPath, (string) ($training['datum'] ?? ''));
+    if (isTrainingMonthLocked($monthStatus)) {
+        return ['Monatsstatus ist gesperrt oder freigegeben. Änderungen sind nicht möglich.', 'error'];
+    }
+
+    $assignment = findAssignmentById(loadAssignmentRecords($rootPath), $assignmentId);
+    if (!$assignment) {
+        return ['Einteilung nicht gefunden.', 'error'];
+    }
+    if ($assignment['training_id'] !== $trainingId) {
+        return ['Einteilung gehört nicht zu diesem Training.', 'error'];
+    }
+
+    $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
+    if (!isAdmin() && ($trainerId === '' || $assignment['trainer_id'] !== $trainerId)) {
+        return ['Keine Berechtigung für diese Einteilung.', 'error'];
+    }
+
+    $attendance = isset($_POST['attendance']) ? 'JA' : 'NEIN';
+    $assignment['attendance'] = $attendance;
+    $assignment['kommentar'] = trim((string) ($_POST['kommentar'] ?? ''));
+    $assignment['einsatz_start'] = normalizeTime((string) ($_POST['einsatz_start'] ?? ''));
+    $assignment['einsatz_ende'] = normalizeTime((string) ($_POST['einsatz_ende'] ?? ''));
+
+    if (isAdmin()) {
+        $role = trim((string) ($_POST['rolle'] ?? ''));
+        if ($role !== '') {
+            $roleRates = loadRoleRates($rootPath);
+            $assignment['rolle'] = $role;
+            $assignment['satz_eur'] = $roleRates[$role] ?? $assignment['satz_eur'];
+        }
+    }
+
+    $assignment['training_datum'] = $training['datum'] ?? $assignment['training_datum'];
+    $assignment['training_status'] = $training['status'] ?? $assignment['training_status'];
+    $assignment['training_dauer_stunden'] = $training['dauer_stunden'] ?? $assignment['training_dauer_stunden'];
+
+    if (strtolower(trim((string) ($training['status'] ?? ''))) === 'ausgefallen') {
+        $assignment['betrag_eur'] = '0';
+    }
+
+    $assignmentStore = loadAssignmentStore($rootPath);
+    $assignmentStore['assignments'][$assignmentId] = $assignment;
+    saveAssignmentStore($rootPath, $assignmentStore);
+
+    return ['Training gespeichert.', 'success'];
+}
+
+function resolveTrainingMonthStatus(string $rootPath, string $date): string
+{
+    $store = loadMonthlyStatusStore($rootPath);
+    $monthKey = buildMonthKey($date);
+    if ($monthKey === '') {
+        return 'offen';
+    }
+
+    $status = trim((string) ($store['months'][$monthKey] ?? ''));
+    return $status !== '' ? $status : 'offen';
+}
+
+function isTrainingMonthLocked(string $status): bool
+{
+    $normalized = strtolower(trim($status));
+    return in_array($normalized, ['gesperrt', 'freigegeben'], true);
+}
+
+function buildMonthKey(string $date): string
+{
+    $timestamp = parseDateToTimestamp($date);
+    if ($timestamp === null) {
+        return '';
+    }
+    return date('Y-m', $timestamp);
+}
+
+function loadMonthlyStatusStore(string $rootPath): array
+{
+    $path = $rootPath . '/storage/abrechnung_status.json';
+    if (!is_file($path)) {
+        return ['months' => []];
+    }
+
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data)) {
+        return ['months' => []];
+    }
+
+    if (!isset($data['months']) || !is_array($data['months'])) {
+        $data['months'] = [];
+    }
+
+    return $data;
 }
 
 function formatTrainingDateLabel(string $date): string
@@ -1246,6 +1500,8 @@ function handleTrainingAdminPost(string $rootPath): array
             'attendance' => 'NEIN',
             'checkin_am' => '',
             'kommentar' => '',
+            'einsatz_start' => '',
+            'einsatz_ende' => '',
             'training_datum' => $training['datum'] ?? '',
             'training_status' => $training['status'] ?? '',
             'training_dauer_stunden' => $training['dauer_stunden'] ?? '',
@@ -1869,6 +2125,8 @@ function normalizeAssignmentRecord(array $assoc): array
         'attendance' => trim((string) ($assoc['attendance'] ?? '')),
         'checkin_am' => trim((string) ($assoc['checkin_am'] ?? '')),
         'kommentar' => trim((string) ($assoc['kommentar'] ?? '')),
+        'einsatz_start' => trim((string) ($assoc['einsatz_start'] ?? '')),
+        'einsatz_ende' => trim((string) ($assoc['einsatz_ende'] ?? '')),
         'training_datum' => trim((string) ($assoc['training_datum'] ?? '')),
         'training_status' => trim((string) ($assoc['training_status'] ?? '')),
         'training_dauer_stunden' => trim((string) ($assoc['training_dauer_stunden'] ?? '')),
@@ -1889,6 +2147,8 @@ function defaultAssignmentRecord(string $assignmentId): array
         'attendance' => '',
         'checkin_am' => '',
         'kommentar' => '',
+        'einsatz_start' => '',
+        'einsatz_ende' => '',
         'training_datum' => '',
         'training_status' => '',
         'training_dauer_stunden' => '',
