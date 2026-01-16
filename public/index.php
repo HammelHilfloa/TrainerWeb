@@ -976,6 +976,7 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
         . '</div>';
 
     $planHtml = '';
+    $planHasContent = false;
     if ($trainingPlan !== null) {
         $planTitle = trim((string) ($trainingPlan['titel'] ?? ''));
         $planContent = trim((string) ($trainingPlan['inhalt'] ?? ''));
@@ -993,7 +994,15 @@ function renderTrainingDetail(string $rootPath, ?string $message, string $messag
                 . '<div class="plan-content">' . $planContentHtml . '</div>'
                 . $planLinkHtml
                 . '</section>';
+            $planHasContent = true;
         }
+    }
+
+    if (!$planHasContent) {
+        $planHtml = '<section class="card plan-card">'
+            . '<h2 class="plan-title">Trainingsplan</h2>'
+            . '<p class="helper">Zu diesem Training gibt es noch keinen Trainingsplan…</p>'
+            . '</section>';
     }
 
     return '<section class="card">'
@@ -1356,6 +1365,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $trainers = loadTrainerRecords($rootPath);
     $roleRates = loadRoleRates($rootPath);
     $trainingPlans = loadTrainingPlanRecords($rootPath);
+    $trainingPlanTemplates = loadTrainingPlanTemplateRecords($rootPath);
 
     $filterStart = trim((string) ($_GET['filter_start'] ?? ''));
     $filterEnd = trim((string) ($_GET['filter_end'] ?? ''));
@@ -1365,6 +1375,8 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
     $assignTrainingId = trim((string) ($_GET['assign_training_id'] ?? ''));
     $trainerSearch = trim((string) ($_GET['trainer_search'] ?? ''));
     $planTrainingId = trim((string) ($_GET['plan_training_id'] ?? ''));
+    $templateGroup = trim((string) ($_GET['template_group'] ?? ''));
+    $templateId = trim((string) ($_GET['template_id'] ?? ''));
 
     $filteredTrainings = array_values(array_filter($trainings, static function (array $training) use ($filterStart, $filterEnd, $filterGroup, $filterStatus): bool {
         if ($filterGroup !== '' && $training['gruppe'] !== $filterGroup) {
@@ -1701,7 +1713,143 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<div class="trainer-list">' . $trainerListHtml . '</div>'
         . '</section>';
 
+    $planTraining = $planTrainingId !== '' ? findTrainingById($trainings, $planTrainingId) : null;
+    $planTrainingGroup = $planTraining ? trim((string) ($planTraining['gruppe'] ?? '')) : '';
+
+    $selectedTemplate = null;
+    if ($templateId !== '' && isset($trainingPlanTemplates[$templateId])) {
+        $selectedTemplate = $trainingPlanTemplates[$templateId];
+        if ($templateGroup === '') {
+            $templateGroup = $selectedTemplate['gruppe'] ?? '';
+        }
+    }
+
+    if ($templateGroup === '') {
+        if ($planTrainingGroup !== '') {
+            $templateGroup = $planTrainingGroup;
+        } elseif ($trainingGroups !== []) {
+            $templateGroup = $trainingGroups[0];
+        }
+    }
+
+    $templateGroups = $trainingGroups;
+    if ($templateGroup !== '' && !in_array($templateGroup, $templateGroups, true)) {
+        $templateGroups[] = $templateGroup;
+    }
+
+    $templateGroupOptions = '<option value="">Gruppe wählen</option>';
+    foreach ($templateGroups as $group) {
+        $selected = $templateGroup === $group ? ' selected' : '';
+        $templateGroupOptions .= '<option value="' . htmlspecialchars($group) . '"' . $selected . '>' . htmlspecialchars($group) . '</option>';
+    }
+
+    $templatesForGroup = array_values(array_filter($trainingPlanTemplates, static function (array $template) use ($templateGroup): bool {
+        if ($templateGroup === '') {
+            return false;
+        }
+        return $template['gruppe'] === $templateGroup;
+    }));
+    usort($templatesForGroup, static function (array $a, array $b): int {
+        return strcasecmp((string) ($a['titel'] ?? ''), (string) ($b['titel'] ?? ''));
+    });
+
+    $templateListHtml = '';
+    foreach ($templatesForGroup as $template) {
+        $templateTitle = trim((string) ($template['titel'] ?? ''));
+        $templateTitle = $templateTitle !== '' ? $templateTitle : 'Ohne Titel';
+        $templateMeta = trim((string) ($template['updated_at'] ?? ''));
+        $templateLabel = '<span class="badge">' . htmlspecialchars((string) ($template['gruppe'] ?? '')) . '</span>';
+        if ($templateMeta !== '') {
+            $templateLabel .= '<span class="badge">Update: ' . htmlspecialchars($templateMeta) . '</span>';
+        }
+
+        $templateListHtml .= '<article class="admin-item">'
+            . '<div class="admin-meta">' . $templateLabel . '</div>'
+            . '<p><strong>' . htmlspecialchars($templateTitle) . '</strong></p>'
+            . '<div class="admin-actions">'
+            . '<a class="button-link secondary" href="/admin?template_group=' . rawurlencode($templateGroup) . '&template_id=' . rawurlencode($template['template_id']) . '">Bearbeiten</a>'
+            . '<form method="post" action="/admin?template_group=' . rawurlencode($templateGroup) . '" onsubmit="return confirm(\'Template duplizieren?\')">'
+            . '<input type="hidden" name="action" value="duplicate_training_plan_template">'
+            . '<input type="hidden" name="template_id" value="' . htmlspecialchars($template['template_id']) . '">'
+            . '<button class="secondary" type="submit">Duplizieren</button>'
+            . '</form>'
+            . '<form method="post" action="/admin?template_group=' . rawurlencode($templateGroup) . '" onsubmit="return confirm(\'Template wirklich löschen?\')">'
+            . '<input type="hidden" name="action" value="delete_training_plan_template">'
+            . '<input type="hidden" name="template_id" value="' . htmlspecialchars($template['template_id']) . '">'
+            . '<button class="danger" type="submit">Löschen</button>'
+            . '</form>'
+            . '</div>'
+            . '</article>';
+    }
+
+    if ($templateListHtml === '') {
+        $templateListHtml = '<p class="helper">Keine Templates für diese Gruppe vorhanden.</p>';
+    }
+
+    $templateTitleValue = $selectedTemplate ? trim((string) ($selectedTemplate['titel'] ?? '')) : '';
+    $templateContentValue = $selectedTemplate ? trim((string) ($selectedTemplate['inhalt'] ?? '')) : '';
+    $templateLinkValue = $selectedTemplate ? trim((string) ($selectedTemplate['link'] ?? '')) : '';
+    $templateGroupValue = $selectedTemplate ? trim((string) ($selectedTemplate['gruppe'] ?? '')) : $templateGroup;
+
+    $templateGroupSelectOptions = '<option value="">Gruppe wählen</option>';
+    foreach ($templateGroups as $group) {
+        $selected = $templateGroupValue === $group ? ' selected' : '';
+        $templateGroupSelectOptions .= '<option value="' . htmlspecialchars($group) . '"' . $selected . '>' . htmlspecialchars($group) . '</option>';
+    }
+
+    $templateFormActionQuery = buildAdminQuery(['template_group' => $templateGroup, 'template_id' => $templateId]);
+    $templateFormHtml = '<section class="card">'
+        . '<div class="section-title"><h2>Trainingsplan Templates</h2><span class="badge">Vorlagen</span></div>'
+        . '<p class="helper">Templates je Gruppe verwalten, duplizieren und löschen.</p>'
+        . '<form class="form-grid cols-2" method="get" action="/admin">'
+        . '<div><label for="template_group">Gruppe</label><select id="template_group" name="template_group">' . $templateGroupOptions . '</select></div>'
+        . '<div class="admin-actions">'
+        . '<button class="secondary" type="submit">Gruppe laden</button>'
+        . '<a class="button-link secondary" href="/admin?template_group=' . rawurlencode($templateGroup) . '">Auswahl zurücksetzen</a>'
+        . '</div>'
+        . '</form>'
+        . '<div class="admin-list">' . $templateListHtml . '</div>'
+        . '<form class="form-grid" method="post" action="/admin' . $templateFormActionQuery . '">'
+        . '<input type="hidden" name="action" value="save_training_plan_template">'
+        . '<input type="hidden" name="template_id" value="' . htmlspecialchars($templateId) . '">'
+        . '<div><label for="template_group_input">Gruppe</label><select id="template_group_input" name="gruppe">' . $templateGroupSelectOptions . '</select></div>'
+        . '<div><label for="template_titel">Titel</label><input id="template_titel" name="titel" placeholder="z.B. Aufwärmen & Technik" value="' . htmlspecialchars($templateTitleValue) . '"></div>'
+        . '<div><label for="template_link">Link (optional)</label><input id="template_link" name="link" type="url" placeholder="https://..." value="' . htmlspecialchars($templateLinkValue) . '"></div>'
+        . '<div><label for="template_inhalt">Inhalt</label><textarea id="template_inhalt" name="inhalt" placeholder="Inhalte, Material oder Abläufe – am besten mit Zeilenumbrüchen.">'
+        . htmlspecialchars($templateContentValue)
+        . '</textarea><div class="form-note">Tipp: Absätze werden automatisch in gut lesbare Blöcke umgewandelt.</div></div>'
+        . '<button class="primary" type="submit">Template speichern</button>'
+        . '</form>'
+        . '</section>';
+
     $planQuery = buildAdminQuery(['plan_training_id' => $planTrainingId]);
+    $planTemplateOptions = '<option value="">Template auswählen</option>';
+    $planTemplateHelper = '';
+    $planTemplateDisabled = '';
+    $planTemplateButtonDisabled = '';
+    if ($planTrainingGroup === '') {
+        $planTemplateHelper = '<p class="helper">Für dieses Training ist keine Gruppe hinterlegt.</p>';
+        $planTemplateDisabled = ' disabled';
+        $planTemplateButtonDisabled = ' disabled';
+    }
+
+    if ($planTrainingGroup !== '') {
+        $planTemplatesForGroup = array_values(array_filter($trainingPlanTemplates, static function (array $template) use ($planTrainingGroup): bool {
+            return $template['gruppe'] === $planTrainingGroup;
+        }));
+        usort($planTemplatesForGroup, static function (array $a, array $b): int {
+            return strcasecmp((string) ($a['titel'] ?? ''), (string) ($b['titel'] ?? ''));
+        });
+        foreach ($planTemplatesForGroup as $template) {
+            $label = trim((string) ($template['titel'] ?? ''));
+            $label = $label !== '' ? $label : 'Ohne Titel';
+            $planTemplateOptions .= '<option value="' . htmlspecialchars($template['template_id']) . '">' . htmlspecialchars($label) . '</option>';
+        }
+        if ($planTemplatesForGroup === []) {
+            $planTemplateHelper = '<p class="helper">Für diese Gruppe gibt es noch keine Templates.</p>';
+            $planTemplateButtonDisabled = ' disabled';
+        }
+    }
     $planSection = '<section class="card">'
         . '<div class="section-title"><h2>Trainingsplan verwalten</h2><span class="badge">Inhalte</span></div>'
         . '<p class="helper">Pro Training kann ein Trainingsplan mit Titel, Inhalt und optionalem Link gepflegt werden.</p>'
@@ -1713,6 +1861,15 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '</div>'
         . '</form>'
         . $planMetaHtml
+        . '<form class="form-grid cols-2" method="post" action="/admin' . $planQuery . '">'
+        . '<input type="hidden" name="action" value="apply_training_plan_template">'
+        . '<input type="hidden" name="training_id" value="' . htmlspecialchars($planTrainingId) . '">'
+        . '<div><label for="plan_template_id">Template übernehmen</label><select id="plan_template_id" name="template_id"' . $planTemplateDisabled . '>' . $planTemplateOptions . '</select></div>'
+        . '<div class="admin-actions">'
+        . '<button class="secondary" type="submit"' . ($planTrainingId === '' ? ' disabled' : $planTemplateButtonDisabled) . '>Duplizieren</button>'
+        . '</div>'
+        . '</form>'
+        . $planTemplateHelper
         . '<form class="form-grid" method="post" action="/admin' . $planQuery . '">'
         . '<input type="hidden" name="action" value="save_training_plan">'
         . '<input type="hidden" name="training_id" value="' . htmlspecialchars($planTrainingId) . '">'
@@ -1749,6 +1906,7 @@ function renderAdminPage(array $settings, string $rootPath, ?string $message, st
         . '<h2>Liste</h2>'
         . '<div class="admin-list">' . $trainingsHtml . '</div>'
         . '</section>'
+        . $templateFormHtml
         . $planSection
         . $assignSection
         . $editSection
@@ -1818,6 +1976,175 @@ function handleTrainingAdminPost(string $rootPath): array
         saveTrainingPlanStore($rootPath, $planStore);
 
         return ['Trainingsplan gespeichert.', 'success', []];
+    }
+
+    if ($action === 'apply_training_plan_template') {
+        $trainingId = trim((string) ($_POST['training_id'] ?? ''));
+        $templateId = trim((string) ($_POST['template_id'] ?? ''));
+        if ($trainingId === '' || $templateId === '') {
+            return ['Bitte Training und Template auswählen.', 'error', []];
+        }
+
+        $training = findTrainingById(loadTrainingRecords($rootPath), $trainingId);
+        if (!$training) {
+            return ['Training nicht gefunden.', 'error', []];
+        }
+
+        $templates = loadTrainingPlanTemplateRecords($rootPath);
+        $template = $templates[$templateId] ?? null;
+        if (!$template) {
+            return ['Template nicht gefunden.', 'error', []];
+        }
+
+        $existingPlans = loadTrainingPlanRecords($rootPath);
+        $existing = $existingPlans[$trainingId] ?? null;
+        $existingIds = collectExistingTrainingPlanIds($rootPath);
+        $planId = trim((string) ($existing['plan_id'] ?? ''));
+        if ($planId === '') {
+            $planId = generateTrainingPlanId($existingIds);
+        }
+
+        $now = date('d.m.Y');
+        $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
+        $createdAt = trim((string) ($existing['created_at'] ?? ''));
+        $createdBy = trim((string) ($existing['created_by'] ?? ''));
+        if ($createdAt === '') {
+            $createdAt = $now;
+        }
+        if ($createdBy === '') {
+            $createdBy = $trainerId;
+        }
+
+        $planRecord = [
+            'plan_id' => $planId,
+            'training_id' => $trainingId,
+            'titel' => trim((string) ($template['titel'] ?? '')),
+            'inhalt' => trim((string) ($template['inhalt'] ?? '')),
+            'link' => trim((string) ($template['link'] ?? '')),
+            'created_at' => $createdAt,
+            'created_by' => $createdBy,
+            'updated_at' => $now,
+            'updated_by' => $trainerId,
+            'deleted_at' => '',
+        ];
+
+        $planStore = loadTrainingPlanStore($rootPath);
+        $planStore['plans'][$trainingId] = $planRecord;
+        saveTrainingPlanStore($rootPath, $planStore);
+
+        return ['Template wurde in den Trainingsplan übernommen.', 'success', []];
+    }
+
+    if ($action === 'save_training_plan_template') {
+        $templateId = trim((string) ($_POST['template_id'] ?? ''));
+        $group = trim((string) ($_POST['gruppe'] ?? ''));
+        $titel = trim((string) ($_POST['titel'] ?? ''));
+        $inhalt = trim((string) ($_POST['inhalt'] ?? ''));
+        $link = trim((string) ($_POST['link'] ?? ''));
+
+        if ($group === '') {
+            return ['Bitte eine Gruppe auswählen.', 'error', []];
+        }
+
+        if ($titel === '' && $inhalt === '' && $link === '') {
+            return ['Bitte Titel, Inhalt oder Link ausfüllen.', 'error', []];
+        }
+
+        $templates = loadTrainingPlanTemplateRecords($rootPath);
+        $existing = $templateId !== '' ? ($templates[$templateId] ?? null) : null;
+        if ($templateId === '' || $existing === null) {
+            $templateId = generateTrainingPlanTemplateId($templates);
+            $existing = null;
+        }
+
+        $now = date('d.m.Y');
+        $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
+        $createdAt = $existing ? trim((string) ($existing['created_at'] ?? '')) : '';
+        $createdBy = $existing ? trim((string) ($existing['created_by'] ?? '')) : '';
+        if ($createdAt === '') {
+            $createdAt = $now;
+        }
+        if ($createdBy === '') {
+            $createdBy = $trainerId;
+        }
+
+        $record = [
+            'template_id' => $templateId,
+            'gruppe' => $group,
+            'titel' => $titel,
+            'inhalt' => $inhalt,
+            'link' => $link,
+            'created_at' => $createdAt,
+            'created_by' => $createdBy,
+            'updated_at' => $now,
+            'updated_by' => $trainerId,
+            'deleted_at' => '',
+        ];
+
+        $store = loadTrainingPlanTemplateStore($rootPath);
+        $store['templates'][$templateId] = $record;
+        saveTrainingPlanTemplateStore($rootPath, $store);
+
+        return ['Template gespeichert.', 'success', []];
+    }
+
+    if ($action === 'duplicate_training_plan_template') {
+        $templateId = trim((string) ($_POST['template_id'] ?? ''));
+        if ($templateId === '') {
+            return ['Template-ID fehlt.', 'error', []];
+        }
+
+        $templates = loadTrainingPlanTemplateRecords($rootPath);
+        $template = $templates[$templateId] ?? null;
+        if (!$template) {
+            return ['Template nicht gefunden.', 'error', []];
+        }
+
+        $newId = generateTrainingPlanTemplateId($templates);
+        $now = date('d.m.Y');
+        $trainerId = (string) ($_SESSION['user']['trainer_id'] ?? '');
+        $title = trim((string) ($template['titel'] ?? ''));
+        if ($title !== '') {
+            $title .= ' (Kopie)';
+        }
+
+        $record = [
+            'template_id' => $newId,
+            'gruppe' => trim((string) ($template['gruppe'] ?? '')),
+            'titel' => $title,
+            'inhalt' => trim((string) ($template['inhalt'] ?? '')),
+            'link' => trim((string) ($template['link'] ?? '')),
+            'created_at' => $now,
+            'created_by' => $trainerId,
+            'updated_at' => $now,
+            'updated_by' => $trainerId,
+            'deleted_at' => '',
+        ];
+
+        $store = loadTrainingPlanTemplateStore($rootPath);
+        $store['templates'][$newId] = $record;
+        saveTrainingPlanTemplateStore($rootPath, $store);
+
+        return ['Template dupliziert.', 'success', []];
+    }
+
+    if ($action === 'delete_training_plan_template') {
+        $templateId = trim((string) ($_POST['template_id'] ?? ''));
+        if ($templateId === '') {
+            return ['Template-ID fehlt.', 'error', []];
+        }
+
+        $store = loadTrainingPlanTemplateStore($rootPath);
+        $template = $store['templates'][$templateId] ?? null;
+        if (!$template) {
+            return ['Template nicht gefunden.', 'error', []];
+        }
+
+        $template['deleted_at'] = date('d.m.Y');
+        $store['templates'][$templateId] = $template;
+        saveTrainingPlanTemplateStore($rootPath, $store);
+
+        return ['Template gelöscht.', 'success', []];
     }
 
     if ($action === 'assign_trainer') {
@@ -2303,6 +2630,84 @@ function saveTrainingPlanStore(string $rootPath, array $store): void
     $path = $rootPath . '/storage/trainingsplan.json';
     $payload = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     file_put_contents($path, $payload === false ? '{}' : $payload);
+}
+
+function loadTrainingPlanTemplateRecords(string $rootPath): array
+{
+    $store = loadTrainingPlanTemplateStore($rootPath);
+    $records = [];
+
+    foreach ($store['templates'] as $templateId => $record) {
+        $templateId = trim((string) ($record['template_id'] ?? $templateId));
+        if ($templateId === '') {
+            continue;
+        }
+
+        $record = array_merge(defaultTrainingPlanTemplateRecord($templateId), $record);
+        if (trim((string) ($record['deleted_at'] ?? '')) !== '') {
+            continue;
+        }
+
+        $records[$templateId] = $record;
+    }
+
+    return $records;
+}
+
+function defaultTrainingPlanTemplateRecord(string $templateId): array
+{
+    return [
+        'template_id' => $templateId,
+        'gruppe' => '',
+        'titel' => '',
+        'inhalt' => '',
+        'link' => '',
+        'created_at' => '',
+        'created_by' => '',
+        'updated_at' => '',
+        'updated_by' => '',
+        'deleted_at' => '',
+    ];
+}
+
+function loadTrainingPlanTemplateStore(string $rootPath): array
+{
+    $path = $rootPath . '/storage/trainingsplan_templates.json';
+    if (!is_file($path)) {
+        return ['templates' => []];
+    }
+
+    $data = json_decode((string) file_get_contents($path), true);
+    if (!is_array($data)) {
+        return ['templates' => []];
+    }
+
+    $templates = isset($data['templates']) && is_array($data['templates']) ? $data['templates'] : [];
+    return ['templates' => $templates];
+}
+
+function saveTrainingPlanTemplateStore(string $rootPath, array $store): void
+{
+    $path = $rootPath . '/storage/trainingsplan_templates.json';
+    $payload = json_encode($store, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    file_put_contents($path, $payload === false ? '{}' : $payload);
+}
+
+function generateTrainingPlanTemplateId(array $templates): string
+{
+    $existing = [];
+    foreach ($templates as $template) {
+        $id = trim((string) ($template['template_id'] ?? ''));
+        if ($id !== '') {
+            $existing[$id] = true;
+        }
+    }
+
+    do {
+        $candidate = 'T_' . bin2hex(random_bytes(4));
+    } while (isset($existing[$candidate]));
+
+    return $candidate;
 }
 
 function generateTrainingPlanId(array $existingIds): string
